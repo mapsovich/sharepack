@@ -30,6 +30,7 @@ STRINGS = {
     "launching": ("запуск игры...", "launching the game..."),
     "game_closed": ("игра закрыта", "game closed"),
     "exit_code": ("код {code}", "exit code {code}"),
+    "unsafe_path": ("пропущен недопустимый путь из сборки: {path}", "skipped an unsafe path from the pack: {path}"),
 
     # short errors (button text)
     "play": ("играть", "play"),
@@ -46,6 +47,7 @@ STRINGS = {
     "e_redownload": ("не удалось перекачать", "redownload failed"),
     "e_crashed": ("игра вылетела", "game crashed"),
     "e_launch": ("ошибка запуска", "launch error"),
+    "e_tampered": ("данные повреждены", "data corrupted"),
 
     # details (console)
     "d_bad_code": ("код не распознан. Проверьте, что он скопирован полностью",
@@ -57,6 +59,14 @@ STRINGS = {
     "d_server_lost": ("соединение с сервером сборки прервано: {error}", "lost connection to the pack server: {error}"),
     "d_pack_server_failed": ("сервер сборки не смог составить список файлов. Подробности в консоли сервера",
                              "the pack server couldn't build the file list. See the server console for details"),
+    "d_bad_signature": ("ответ сервера сборки не прошёл проверку подписи. Его могли изменить по пути (например, "
+                        "в общественной сети Wi-Fi). Попробуйте другую сеть или обратитесь к владельцу сервера",
+                        "the pack server response failed the signature check. It may have been modified on the way "
+                        "(for example on public Wi-Fi). Try another network or contact the server owner"),
+    "d_bad_file": ("файл {path} не совпадает с файлом на сервере. Возможно, владелец изменил его во время загрузки "
+                   "или файл был изменён по пути. Нажмите «играть» ещё раз",
+                   "the file {path} doesn't match the server copy. The owner may have changed it during the download, "
+                   "or it was modified on the way. Press \"play\" again"),
     "d_pack_bad_json": ("файл sharepack/pack.json на сервере содержит ошибку: это не JSON",
                         "sharepack/pack.json on the server is not valid JSON"),
     "d_loader_install": ("установщик {loader} завершился с ошибкой на шаге {task}: {error}",

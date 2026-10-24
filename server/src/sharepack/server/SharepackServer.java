@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,16 +16,24 @@ import java.util.regex.Pattern;
  * a plugin (Paper/Spigot) or a standalone program: java -jar sharepack-server.jar
  *
  * Everything lives in the sharepack/ folder next to the server:
- *   config.properties  language, port, address, key
+ *   config.properties  language, port, address, secret key
  *   pack.json          pack name, game version, loader
  *   files/             synced to players on every launch
  *   defaults/          copied to players once, never overwritten
  */
 public final class SharepackServer {
-    static final String VERSION = "v2026.b1";
+    static final String VERSION = "v2026.b2";
     static final String RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest";
     private static final String DIR = "sharepack";
     private static final String OLD_DIR = "packserver";
+    /** Connections served at once. The rest are closed, so a flood can't eat the game server's memory. */
+    private static final int MAX_CONNECTIONS = 32;
+    private static final int MAX_LINE = 8192;
+    private static final int MAX_HEADERS = 64;
+    private static final long REQUEST_TIMEOUT_MS = 20000;
+    /** Wrong keys allowed per IP within FAIL_WINDOW_MS before that IP is ignored until the window ends. */
+    private static final int MAX_FAILS = 20;
+    private static final long FAIL_WINDOW_MS = 10 * 60 * 1000;
 
     private static boolean started;
     /** Console and template language, from language= in config.properties. */
@@ -33,7 +42,12 @@ public final class SharepackServer {
     private final File dir;
     private final GameInfo game;
     private final Map<String, String[]> hashCache = new ConcurrentHashMap<>();
-    private String key;
+    private final Semaphore slots = new Semaphore(MAX_CONNECTIONS);
+    /** ip -> {failures, window start} */
+    private final Map<String, long[]> fails = new ConcurrentHashMap<>();
+    /** Access key from the URL; signing key for the manifest. Both are derived from the secret in the code. */
+    private String accessKey;
+    private byte[] signingKey;
 
     private SharepackServer(File dir, GameInfo game) {
         this.dir = dir;
@@ -112,7 +126,9 @@ public final class SharepackServer {
                     "Could not detect the Minecraft version. Set minecraft and loader in " + packJson + "."));
         }
 
-        key = cfg.getProperty("key");
+        byte[] secret = hexToBytes(cfg.getProperty("key"));
+        accessKey = Code.accessKey(secret);
+        signingKey = Code.signingKey(secret);
         int httpPort = Integer.parseInt(cfg.getProperty("http-port", "25566").trim());
         String[] address = detectAddress(cfg);
 
@@ -130,7 +146,7 @@ public final class SharepackServer {
                     "Set public-address in " + cfgFile + " and restart the server."));
             return;
         }
-        String code = Code.encode(address[0], httpPort, hexToBytes(key));
+        String code = Code.encode(address[0], httpPort, secret);
         writeText(new File(dir, "CODE.txt"), code + "\n");
         log(tr("Адрес в коде: " + address[0] + " (источник: " + address[1] + ").",
                 "Address in the code: " + address[0] + " (source: " + address[1] + ")."));
@@ -160,11 +176,15 @@ public final class SharepackServer {
         }
         String lang = p.getProperty("language", "auto").trim();
         ru = pickRussian(lang);
-        // Rewrite the file when the key is missing or the file predates the language setting.
-        if (p.getProperty("key", "").trim().length() != Code.KEY_BYTES * 2 || p.getProperty("language") == null) {
+        // Rewrite the file when the key is missing, has the old length, or the file predates the language setting.
+        if (p.getProperty("key", "").trim().length() != Code.SECRET_BYTES * 2 || p.getProperty("language") == null) {
             String keyHex = p.getProperty("key", "").trim();
-            if (keyHex.length() != Code.KEY_BYTES * 2) {
-                byte[] k = new byte[Code.KEY_BYTES];
+            if (keyHex.length() != Code.SECRET_BYTES * 2) {
+                if (!keyHex.isEmpty()) {
+                    log(tr("Формат кода изменился, создан новый ключ. Старый код больше не работает.",
+                            "The code format has changed and a new key was generated. The old code no longer works."));
+                }
+                byte[] k = new byte[Code.SECRET_BYTES];
                 new SecureRandom().nextBytes(k);
                 keyHex = bytesToHex(k);
             }
@@ -177,10 +197,10 @@ public final class SharepackServer {
                     + tr("# Внешний IP или домен. Если пусто, определяется автоматически\n",
                             "# Public IP or domain. Detected automatically if empty\n")
                     + "public-address=" + p.getProperty("public-address", "") + "\n"
-                    + tr("# Ключ сборки, входит в код. Если удалить строку, будет создан новый ключ и старый код\n"
-                                    + "# перестанет работать\n",
-                            "# Pack key, part of the code. Delete this line to generate a new key; the old code\n"
-                                    + "# will stop working\n")
+                    + tr("# Секретный ключ, входит в код. Никому не передавайте его отдельно от кода. Если удалить\n"
+                                    + "# строку, будет создан новый ключ и старый код перестанет работать\n",
+                            "# Secret key, part of the code. Don't share it apart from the code. Delete this line\n"
+                                    + "# to generate a new key; the old code will stop working\n")
                     + "key=" + keyHex + "\n");
             p.setProperty("key", keyHex);
         }
@@ -269,43 +289,98 @@ public final class SharepackServer {
 
     private void acceptLoop(ServerSocket socket) {
         while (true) {
+            Socket s;
             try {
-                Socket s = socket.accept();
-                Thread t = new Thread(() -> handle(s), "sharepack-conn");
-                t.setDaemon(true);
-                t.start();
+                s = socket.accept();
             } catch (IOException e) {
                 log(tr("Ошибка приёма соединения: ", "Accept failed: ") + e);
+                continue;
             }
+            if (blocked(s.getInetAddress().getHostAddress()) || !slots.tryAcquire()) {
+                closeQuietly(s);
+                continue;
+            }
+            Thread t = new Thread(() -> {
+                try {
+                    handle(s);
+                } finally {
+                    slots.release();
+                }
+            }, "sharepack-conn");
+            t.setDaemon(true);
+            t.start();
         }
     }
 
     private void handle(Socket s) {
         try (Socket sock = s) {
-            sock.setSoTimeout(15000);
-            BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1));
-            String requestLine = in.readLine();
+            sock.setSoTimeout(10000);
+            long deadline = System.currentTimeMillis() + REQUEST_TIMEOUT_MS;
+            InputStream in = new BufferedInputStream(sock.getInputStream());
+            String requestLine = readLine(in, deadline);
             if (requestLine == null) return;
             String line;
-            while ((line = in.readLine()) != null && !line.isEmpty()) { /* headers are not needed */ }
+            int headers = 0;
+            while ((line = readLine(in, deadline)) != null && !line.isEmpty()) {
+                if (++headers > MAX_HEADERS) return;
+            }
             OutputStream out = new BufferedOutputStream(sock.getOutputStream());
             String[] parts = requestLine.split(" ");
             if (parts.length < 2 || !(parts[0].equals("GET") || parts[0].equals("HEAD"))) {
                 sendError(out, 405);
                 return;
             }
-            serve(parts[0].equals("HEAD"), parts[1], out);
+            serve(parts[0].equals("HEAD"), parts[1], sock.getInetAddress().getHostAddress(), out);
             out.flush();
+        } catch (IOException | IllegalArgumentException ignored) {
+        }
+    }
+
+    /** A line of at most MAX_LINE bytes; the whole request must arrive before the deadline. */
+    private static String readLine(InputStream in, long deadline) throws IOException {
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\n') break;
+            if (line.size() >= MAX_LINE || System.currentTimeMillis() > deadline) throw new IOException("request too long");
+            if (c != '\r') line.write(c);
+        }
+        if (c == -1 && line.size() == 0) return null;
+        return new String(line.toByteArray(), StandardCharsets.ISO_8859_1);
+    }
+
+    private boolean blocked(String ip) {
+        long[] f = fails.get(ip);
+        return f != null && f[0] >= MAX_FAILS && System.currentTimeMillis() - f[1] < FAIL_WINDOW_MS;
+    }
+
+    /** Counts a wrong key. Guessing the key means millions of tries, so a few dozen per IP is plenty. */
+    private void recordFail(String ip) {
+        long now = System.currentTimeMillis();
+        if (fails.size() > 10000) fails.clear();
+        long[] f = fails.compute(ip, (k, v) -> v == null || now - v[1] >= FAIL_WINDOW_MS ? new long[]{0, now} : v);
+        synchronized (f) {
+            if (++f[0] == MAX_FAILS) {
+                log(tr("Слишком много запросов с неверным кодом с " + ip + ", адрес заблокирован на 10 минут.",
+                        "Too many requests with a wrong code from " + ip + ", blocked for 10 minutes."));
+            }
+        }
+    }
+
+    private static void closeQuietly(Socket s) {
+        try {
+            s.close();
         } catch (IOException ignored) {
         }
     }
 
-    private void serve(boolean head, String rawPath, OutputStream out) throws IOException {
+    private void serve(boolean head, String rawPath, String ip, OutputStream out) throws IOException {
         String path = URLDecoder.decode(rawPath.split("\\?")[0].replace("+", "%2B"), "UTF-8");
         String[] seg = path.replaceFirst("^/+", "").split("/", 3);
         // Wrong key: answer 404 as if nothing is there.
         if (seg.length < 2 || !MessageDigest.isEqual(seg[0].toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII),
-                key.getBytes(StandardCharsets.US_ASCII))) {
+                accessKey.getBytes(StandardCharsets.US_ASCII))) {
+            recordFail(ip);
             sendError(out, 404);
             return;
         }
@@ -318,7 +393,12 @@ public final class SharepackServer {
                 sendError(out, 500);
                 return;
             }
-            sendHeaders(out, 200, "application/json; charset=utf-8", body.length);
+            // The launcher checks this signature, so a manifest changed on the way is rejected.
+            out.write(("HTTP/1.1 200 OK\r\n"
+                    + "Content-Type: application/json; charset=utf-8\r\n"
+                    + "Content-Length: " + body.length + "\r\n"
+                    + "X-Sharepack-Signature: " + bytesToHex(hmac(signingKey, body)) + "\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
             if (!head) out.write(body);
             return;
         }
@@ -370,11 +450,11 @@ public final class SharepackServer {
             for (File f : all) {
                 String rel = base.toURI().relativize(f.toURI()).getPath();
                 if (!seen.add(rel)) continue;
-                String[] h = sha1(f);
+                String[] h = sha256(f);
                 if (!first) sb.append(',');
                 first = false;
                 sb.append("{\"path\":").append(jsonString(rel))
-                        .append(",\"sha1\":\"").append(h[0])
+                        .append(",\"sha256\":\"").append(h[0])
                         .append("\",\"size\":").append(f.length())
                         .append(",\"src\":\"").append(src)
                         .append("\",\"default\":").append(src.equals("defaults"))
@@ -435,12 +515,12 @@ public final class SharepackServer {
         }
     }
 
-    private String[] sha1(File f) throws IOException {
+    private String[] sha256(File f) throws IOException {
         String cacheKey = f.getPath() + "|" + f.length() + "|" + f.lastModified();
         String[] cached = hashCache.get(cacheKey);
         if (cached != null) return cached;
         try (InputStream in = new FileInputStream(f)) {
-            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] buf = new byte[1 << 16];
             int n;
             while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
@@ -453,6 +533,16 @@ public final class SharepackServer {
     }
 
     // ---------------- Helpers ----------------
+
+    static byte[] hmac(byte[] key, byte[] data) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"));
+            return mac.doFinal(data);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     static byte[] httpGet(String url) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();

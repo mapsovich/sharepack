@@ -67,7 +67,7 @@ Files can be changed while the server is running: the launcher compares them on 
 - `language`: console language, `auto`, `ru` or `en`.
 - `http-port`: pack port, 25566 by default.
 - `public-address`: public IP or domain. If empty, the address is detected in this order: the hosting panel IP (`SERVER_IP` on Pterodactyl/Pelican), `server-ip` from `server.properties`, then api.ipify.org. The detected address is printed in the console. With a dynamic home IP, use a domain (for example from DuckDNS) so the code doesn't change.
-- `key`: secret key, part of the code. Delete the line to generate a new key; the old code stops working.
+- `key`: secret key, part of the code. Delete the line to generate a new key; the old code stops working. Codes made before v2026.b2 are replaced automatically on the first start.
 
 ## Players
 
@@ -82,6 +82,14 @@ Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be
 ## Updates
 
 The launcher checks GitHub releases on startup. If a newer version exists, it offers to download it, replaces the exe and restarts. The server plugin checks on startup as well and prints a message in the console.
+
+## Security
+
+- The code holds the server address, the pack port and a 96-bit secret. Codes of different servers can't match: the address and port are part of the code.
+- The secret is never sent over the network. The launcher requests files with an access key derived from it, and the server signs the file list (HMAC-SHA256) with another derived key. Every downloaded file is checked against the SHA-256 in the signed list. A file list or a mod modified on the way (for example on public Wi-Fi) is rejected.
+- Paths from the server are accepted only inside the pack folder. `managed_dirs` can't point at worlds, screenshots, `options.txt` or the game files.
+- The pack server accepts at most 32 connections at once, limits request size and time, and blocks an IP for 10 minutes after 20 requests with a wrong key.
+- Mods are programs. Install packs only from servers you trust.
 
 ## Notes
 

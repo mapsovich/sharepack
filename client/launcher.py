@@ -6,6 +6,7 @@ import contextlib
 import ctypes
 import glob
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -28,11 +29,13 @@ import i18n
 from i18n import t
 
 TITLE = "sharepack"
-VERSION = "v2026.b1"
+VERSION = "v2026.b2"
 CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32, same as the server
+SECRET_BYTES = 12
 LINKS = {"github": "https://github.com/mapsovich", "m": "https://mstudio.one/game"}
 RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest"
 RELEASES_PAGE = "https://github.com/mapsovich/sharepack/releases/latest"
+RELEASES_DOWNLOAD = "https://github.com/mapsovich/sharepack/releases/download/"
 
 # former launcher names, their data is moved by migrate_old_data
 OLD_NAMES = ("joinpack", "minejoin")  # newest first
@@ -61,6 +64,9 @@ SETTINGS_PATH = os.path.join(HOME_DIR, "launcher.json")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 # kept on redownload
 KEEP_ON_REDOWNLOAD = {"saves", "screenshots", "options.txt"}
+# managed_dirs can't point here: player data and the installed game
+PROTECTED_DIRS = {"saves", "screenshots", "options.txt", "versions", "libraries", "assets", "runtime", "logs",
+                  "crash-reports"}
 MAX_NICKS = 10
 
 # share of each step in the progress bar; assets take the longest, pack files are the last 15%
@@ -153,6 +159,8 @@ def check_update():
         return None
     asset = next((a.get("browser_download_url") for a in release.get("assets", []) if a.get("name") == "sharepack.exe"),
                  None)
+    if not str(asset).startswith(RELEASES_DOWNLOAD):
+        asset = None
     return {"version": tag, "url": release.get("html_url") or RELEASES_PAGE, "asset": asset}
 
 
@@ -232,8 +240,14 @@ class LauncherError(Exception):
         self.problem = {"short": short, "detail": detail}
 
 
+def derive_key(label, secret):
+    return hashlib.sha256(label + secret).digest()
+
+
 def decode_code(code):
-    """Code -> (host, port, key) or None."""
+    """Code -> (host, port, access key, signing key) or None.
+    The secret from the code never leaves this computer: the server is asked by the access key, and the manifest
+    is checked with the signing key (see Code.java on the server side)."""
     s = code.upper().replace("-", "").replace(" ", "").replace("O", "0").replace("I", "1").replace("L", "1")
     if not s or any(c not in CODE_ALPHABET for c in s):
         return None
@@ -247,15 +261,18 @@ def decode_code(code):
             host, rest = data[2:2 + n].decode("ascii"), data[2 + n:]
         else:
             return None
-        if len(rest) < 7:
+        n = 2 + SECRET_BYTES
+        if len(rest) < n + 1:
             return None
-        body = data[:len(data) - len(rest) + 6]
+        body = data[:len(data) - len(rest) + n]
         checksum = 0
         for b in body:
             checksum = (checksum * 31 + b) & 0xFF
-        if checksum != rest[6]:
+        if checksum != rest[n]:
             return None
-        return host, (rest[0] << 8) | rest[1], rest[2:6].hex()
+        secret = bytes(rest[2:n])
+        access = derive_key(b"sharepack/access", secret)[:8].hex()
+        return host, (rest[0] << 8) | rest[1], access, derive_key(b"sharepack/sign", secret)
     except (IndexError, UnicodeDecodeError):
         return None
 
@@ -456,8 +473,8 @@ def offline_uuid(name):
     return h.hex()
 
 
-def sha1_of(path):
-    h = hashlib.sha1()
+def sha256_of(path):
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
@@ -477,8 +494,9 @@ def write_servers_dat(path, name, ip):
 
 
 class Installer:
-    def __init__(self, host, port, key, data_dir, status, progress, java_path=None):
+    def __init__(self, host, port, key, signing_key, data_dir, status, progress, java_path=None):
         self.host = host
+        self.signing_key = signing_key
         self.status = status
         self.progress = progress
         self.java_path = java_path
@@ -520,6 +538,10 @@ class Installer:
         if r.status_code >= 500:
             raise LauncherError(t("e_pack"), t("d_pack_server_failed"))
         r.raise_for_status()
+        # Plain HTTP can be modified on the way. The signature is made with a key only the code holder knows.
+        expected = hmac.new(self.signing_key, r.content, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, r.headers.get("X-Sharepack-Signature", "").lower()):
+            raise LauncherError(t("e_tampered"), t("d_bad_signature"))
         try:
             data = r.json()
             if not isinstance(data.get("pack"), dict):
@@ -598,12 +620,32 @@ class Installer:
         self.progress(PROGRESS_LOADER[1])
         return version_id
 
+    def pack_path(self, rel, managed=False):
+        """Absolute path for a path from the manifest, or None if it leaves the profile folder.
+        The manifest comes from someone else's server, so it must not reach anything outside the profile,
+        and managed_dirs must not point at folders the player owns (worlds, screenshots) or at the game itself."""
+        if not isinstance(rel, str) or ":" in rel or rel.startswith(("/", "\\")):
+            return None
+        parts = rel.replace("\\", "/").strip("/").split("/")
+        if any(p in ("", ".", "..") for p in parts):
+            return None
+        if managed and parts[0].lower() in PROTECTED_DIRS:
+            return None
+        path = os.path.abspath(os.path.join(self.game_dir, *parts))
+        base = os.path.abspath(self.game_dir)
+        if os.path.commonpath([os.path.normcase(base), os.path.normcase(path)]) != os.path.normcase(base):
+            return None
+        return path
+
     def sync_files(self, m):
         files = m.get("files", [])
         wanted = {f["path"] for f in files}
         # remove files in managed_dirs that are not in the pack
         for d in m.get("managed_dirs", []):
-            root = os.path.join(self.game_dir, d)
+            root = self.pack_path(d, managed=True)
+            if not root:
+                self.status(t("unsafe_path", path=d))
+                continue
             for dirpath, _, names in os.walk(root):
                 for n in names:
                     rel = os.path.relpath(os.path.join(dirpath, n), self.game_dir).replace("\\", "/")
@@ -612,10 +654,13 @@ class Installer:
 
         todo = []
         for f in files:
-            local = os.path.join(self.game_dir, *f["path"].split("/"))
-            if not os.path.normpath(local).startswith(os.path.normpath(self.game_dir)):
+            local = self.pack_path(f["path"])
+            if not local:
+                self.status(t("unsafe_path", path=f["path"]))
                 continue
-            if os.path.isfile(local) and (f.get("default") or sha1_of(local) == f["sha1"]):
+            if f.get("src") not in ("files", "defaults"):
+                continue
+            if os.path.isfile(local) and (f.get("default") or sha256_of(local) == f.get("sha256")):
                 continue
             todo.append((f, local))
 
@@ -626,13 +671,22 @@ class Installer:
         for f, local in todo:
             os.makedirs(os.path.dirname(local), exist_ok=True)
             url = f"{self.pack_url}/{f['src']}/" + urllib.parse.quote(f["path"])
+            h, size = hashlib.sha256(), 0
             with requests.get(url, stream=True, timeout=30) as r:
                 r.raise_for_status()
                 with open(local + ".part", "wb") as out:
                     for chunk in r.iter_content(1 << 16):
+                        size += len(chunk)
+                        if size > f["size"]:
+                            break
+                        h.update(chunk)
                         out.write(chunk)
                         done += len(chunk)
                         self.progress(PROGRESS_LOADER[1] + (1 - PROGRESS_LOADER[1]) * done / total)
+            # the hash comes from the signed manifest, so a file changed on the way doesn't match it
+            if size != f["size"] or h.hexdigest() != f.get("sha256"):
+                os.remove(local + ".part")
+                raise LauncherError(t("e_tampered"), t("d_bad_file", path=f["path"]))
             os.replace(local + ".part", local)
         self.progress(1)
 
@@ -1078,7 +1132,8 @@ class Api:
 
     def _packs(self):
         packs = self._settings.get("packs", {})
-        return [{"code": p["code"], "name": p.get("name", "")} for p in packs.values()]
+        # codes in the old format (before v2026.b2) can't be used any more
+        return [{"code": p["code"], "name": p.get("name", "")} for p in packs.values() if decode_code(p["code"])]
 
     def _remember(self, nick, code, key, name):
         # by key, so a new owner IP updates the entry instead of adding one
