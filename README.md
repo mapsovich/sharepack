@@ -115,4 +115,6 @@ server/              mod/plugin for the server
 
 GPL-3.0, see [LICENSE](LICENSE).
 
+Fonts: [Monocraft](https://github.com/IdreesInc/Monocraft) (SIL Open Font License 1.1) and Ubuntu Mono (Ubuntu Font Licence 1.0), license texts in [client/ui/assets/LICENSES](client/ui/assets/LICENSES).
+
 Not affiliated with Mojang or Microsoft. Minecraft is a trademark of Mojang AB.

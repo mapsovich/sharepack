@@ -115,4 +115,6 @@ server/              мод/плагин для сервера
 
 GPL-3.0, см. [LICENSE](LICENSE).
 
+Шрифты: [Monocraft](https://github.com/IdreesInc/Monocraft) (SIL Open Font License 1.1) и Ubuntu Mono (Ubuntu Font Licence 1.0), тексты лицензий в [client/ui/assets/LICENSES](client/ui/assets/LICENSES).
+
 Проект не связан с Mojang и Microsoft. Minecraft является товарным знаком Mojang AB.
