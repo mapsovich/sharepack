@@ -1,3 +1,5 @@
+![sharepack](docs/banner.ru.png)
+
 [English](README.md) | **Русский**
 
 # sharepack
