@@ -1,0 +1,6 @@
+name: sharepack
+version: 2026.1.0
+main: sharepack.server.BukkitEntry
+description: Serves the modpack to the sharepack launcher
+website: https://github.com/mapsovich/sharepack
+api-version: '1.13'

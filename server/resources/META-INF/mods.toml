@@ -1,0 +1,11 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="GPL-3.0"
+
+[[mods]]
+modId="sharepack"
+version="2026.1.0"
+displayName="sharepack server"
+description="Serves the modpack to the sharepack launcher"
+displayURL="https://github.com/mapsovich/sharepack"
+displayTest="IGNORE_ALL_VERSION"

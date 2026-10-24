@@ -1,0 +1,513 @@
+package sharepack.server;
+
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Serves the modpack to the sharepack launcher. Runs as a mod (Fabric/Quilt/Forge/NeoForge),
+ * a plugin (Paper/Spigot) or a standalone program: java -jar sharepack-server.jar
+ *
+ * Everything lives in the sharepack/ folder next to the server:
+ *   config.properties  language, port, address, key
+ *   pack.json          pack name, game version, loader
+ *   files/             synced to players on every launch
+ *   defaults/          copied to players once, never overwritten
+ */
+public final class SharepackServer {
+    static final String VERSION = "v2026.b1";
+    static final String RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest";
+    private static final String DIR = "sharepack";
+    private static final String OLD_DIR = "packserver";
+
+    private static boolean started;
+    /** Console and template language, from language= in config.properties. */
+    private static boolean ru;
+
+    private final File dir;
+    private final GameInfo game;
+    private final Map<String, String[]> hashCache = new ConcurrentHashMap<>();
+    private String key;
+
+    private SharepackServer(File dir, GameInfo game) {
+        this.dir = dir;
+        this.game = game;
+    }
+
+    /** platform: fabric, forge, neoforge, bukkit or standalone. */
+    public static synchronized void start(String platform) {
+        if (started) return;
+        started = true;
+        try {
+            File old = new File(OLD_DIR).getAbsoluteFile();
+            File dir = new File(DIR).getAbsoluteFile();
+            if (old.isDirectory() && !dir.exists() && !old.renameTo(dir)) dir = old;
+            new SharepackServer(dir, GameInfo.detect(platform)).run();
+        } catch (Exception e) {
+            log(tr("Не удалось запустить sharepack: ", "Failed to start sharepack: ") + e);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        start("standalone");
+        Thread.currentThread().join();
+    }
+
+    /** Bukkit replaces this with the plugin logger, everything else prints to stdout. */
+    static java.util.function.Consumer<String> logger = s -> System.out.println("[sharepack] " + s);
+
+    static void log(String s) {
+        logger.accept(s);
+    }
+
+    static String tr(String ruText, String enText) {
+        return ru ? ruText : enText;
+    }
+
+    /** auto picks Russian for ru/uk/be/kk system locales. */
+    private static boolean pickRussian(String lang) {
+        lang = lang.trim().toLowerCase(Locale.ROOT);
+        if (lang.equals("ru")) return true;
+        if (lang.equals("en")) return false;
+        return Arrays.asList("ru", "uk", "be", "kk").contains(Locale.getDefault().getLanguage());
+    }
+
+    /** The mod is loaded on clients too, where it has nothing to do. fmlPackage: net.minecraftforge or net.neoforged. */
+    public static boolean isClient(String fmlPackage) {
+        try {
+            Object dist = Class.forName(fmlPackage + ".fml.loading.FMLEnvironment").getField("dist").get(null);
+            return "CLIENT".equals(String.valueOf(dist));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void run() throws IOException {
+        new File(dir, "files/mods").mkdirs();
+        new File(dir, "defaults").mkdirs();
+        Properties cfg = loadConfig();
+        File packJson = new File(dir, "pack.json");
+        if (!packJson.exists()) {
+            writeText(packJson, "{\n"
+                    + "  \"name\": \"" + tr("Мой сервер", "My server") + "\",\n"
+                    + "  \"version\": \"1.0\",\n"
+                    + "  \"minecraft\": \"auto\",\n"
+                    + "  \"loader\": \"auto\",\n"
+                    + "  \"loader_version\": \"auto\",\n"
+                    + "  \"memory\": 4096,\n"
+                    + "  \"managed_dirs\": [\"mods\"]\n"
+                    + "}\n");
+            log(tr("Создан " + packJson + ".", "Created " + packJson + "."));
+        }
+        if (game.minecraft != null) {
+            log(tr("Сервер: ", "Server: ") + game);
+        } else {
+            log(tr("Версию Minecraft определить не удалось. Укажите minecraft и loader в " + packJson + ".",
+                    "Could not detect the Minecraft version. Set minecraft and loader in " + packJson + "."));
+        }
+
+        key = cfg.getProperty("key");
+        int httpPort = Integer.parseInt(cfg.getProperty("http-port", "25566").trim());
+        String[] address = detectAddress(cfg);
+
+        ServerSocket socket = new ServerSocket(httpPort);
+        Thread t = new Thread(() -> acceptLoop(socket), "sharepack");
+        t.setDaemon(true);
+        t.start();
+        checkForUpdate();
+
+        File cfgFile = new File(dir, "config.properties");
+        if (address == null) {
+            log(tr("Раздача работает на порту " + httpPort + ", но внешний IP не определён.",
+                    "Serving on port " + httpPort + ", but the public IP could not be detected."));
+            log(tr("Укажите public-address в " + cfgFile + " и перезапустите сервер.",
+                    "Set public-address in " + cfgFile + " and restart the server."));
+            return;
+        }
+        String code = Code.encode(address[0], httpPort, hexToBytes(key));
+        writeText(new File(dir, "CODE.txt"), code + "\n");
+        log(tr("Адрес в коде: " + address[0] + " (источник: " + address[1] + ").",
+                "Address in the code: " + address[0] + " (source: " + address[1] + ")."));
+        log(tr("Если игроки не могут подключиться, укажите public-address в " + cfgFile + ".",
+                "If players cannot connect, set public-address in " + cfgFile + "."));
+        if (onPanelHosting()) {
+            log(tr("Обнаружена панель хостинга: добавьте в ней ещё один порт (allocation),",
+                    "Hosting panel detected: add one more port (allocation) in the panel,"));
+            log(tr("укажите его в http-port в " + cfgFile + " и перезапустите сервер.",
+                    "set it as http-port in " + cfgFile + " and restart the server."));
+        } else {
+            log(tr("Порт раздачи: " + httpPort + " (TCP). Он должен быть открыт на роутере.",
+                    "Pack port: " + httpPort + " (TCP). It must be forwarded on your router."));
+        }
+        log("==============================================");
+        log(tr("  Код для лаунчера: ", "  Launcher code: ") + code);
+        log("==============================================");
+    }
+
+    private Properties loadConfig() throws IOException {
+        File f = new File(dir, "config.properties");
+        Properties p = new Properties();
+        if (f.exists()) {
+            try (Reader r = new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8)) {
+                p.load(r);
+            }
+        }
+        String lang = p.getProperty("language", "auto").trim();
+        ru = pickRussian(lang);
+        // Rewrite the file when the key is missing or the file predates the language setting.
+        if (p.getProperty("key", "").trim().length() != Code.KEY_BYTES * 2 || p.getProperty("language") == null) {
+            String keyHex = p.getProperty("key", "").trim();
+            if (keyHex.length() != Code.KEY_BYTES * 2) {
+                byte[] k = new byte[Code.KEY_BYTES];
+                new SecureRandom().nextBytes(k);
+                keyHex = bytesToHex(k);
+            }
+            writeText(f, tr("# Язык консоли: auto, ru или en. Если русский текст в консоли отображается\n"
+                            + "# неправильно, укажите en\n",
+                            "# Console language: auto, ru or en\n")
+                    + "language=" + lang + "\n"
+                    + tr("# Порт, с которого лаунчер скачивает сборку\n", "# Port the launcher downloads the pack from\n")
+                    + "http-port=" + p.getProperty("http-port", "25566") + "\n"
+                    + tr("# Внешний IP или домен. Если пусто, определяется автоматически\n",
+                            "# Public IP or domain. Detected automatically if empty\n")
+                    + "public-address=" + p.getProperty("public-address", "") + "\n"
+                    + tr("# Ключ сборки, входит в код. Если удалить строку, будет создан новый ключ и старый код\n"
+                                    + "# перестанет работать\n",
+                            "# Pack key, part of the code. Delete this line to generate a new key; the old code\n"
+                                    + "# will stop working\n")
+                    + "key=" + keyHex + "\n");
+            p.setProperty("key", keyHex);
+        }
+        p.setProperty("key", p.getProperty("key").trim().toLowerCase(Locale.ROOT));
+        return p;
+    }
+
+    /**
+     * {address, source} or null. ipify goes last: on panel hostings the node may have several IPs,
+     * and the outgoing one is not always the one the server listens on.
+     */
+    private static String[] detectAddress(Properties cfg) {
+        String manual = cfg.getProperty("public-address", "").trim();
+        if (!manual.isEmpty()) return new String[]{manual, "public-address, config.properties"};
+        // Pterodactyl/Pelican pass the IP of the primary allocation.
+        String panel = System.getenv("SERVER_IP");
+        if (isPublicIPv4(panel)) return new String[]{panel.trim(), "SERVER_IP"};
+        String props = readServerProperty("server-ip", "");
+        if (isPublicIPv4(props)) return new String[]{props.trim(), "server-ip, server.properties"};
+        String ip = detectPublicIp();
+        return ip == null ? null : new String[]{ip, "api.ipify.org"};
+    }
+
+    /** Pterodactyl/Pelican: a second port can only be added in the panel. */
+    private static boolean onPanelHosting() {
+        return System.getenv("P_SERVER_UUID") != null || System.getenv("P_SERVER_LOCATION") != null;
+    }
+
+    /** Not empty, not 0.0.0.0, not a private range and not carrier-grade NAT. */
+    static boolean isPublicIPv4(String s) {
+        if (s == null || !s.trim().matches("\\d{1,3}(\\.\\d{1,3}){3}")) return false;
+        String[] p = s.trim().split("\\.");
+        int a = Integer.parseInt(p[0]), b = Integer.parseInt(p[1]);
+        for (String part : p) if (Integer.parseInt(part) > 255) return false;
+        return !(a == 0 || a == 10 || a == 127 || a >= 224
+                || (a == 169 && b == 254) || (a == 172 && b >= 16 && b <= 31)
+                || (a == 192 && b == 168) || (a == 100 && b >= 64 && b <= 127));
+    }
+
+    private static String detectPublicIp() {
+        try {
+            String ip = new String(httpGet("https://api.ipify.org"), StandardCharsets.US_ASCII).trim();
+            return ip.matches("\\d{1,3}(\\.\\d{1,3}){3}") ? ip : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // ---------------- Updates ----------------
+
+    private static void checkForUpdate() {
+        Thread t = new Thread(() -> {
+            try {
+                String json = new String(httpGet(RELEASES_API), StandardCharsets.UTF_8);
+                String tag = jsonField(json, "tag_name");
+                String url = jsonField(json, "html_url");
+                if (tag != null && isNewer(tag, VERSION)) {
+                    log(tr("Доступна новая версия sharepack: " + tag + " (установлена " + VERSION + "). " + url,
+                            "A new sharepack version is available: " + tag + " (installed " + VERSION + "). " + url));
+                }
+            } catch (IOException ignored) {
+            }
+        }, "sharepack-update");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Compares the numbers in the tags: v2026.b2 > v2026.b1. */
+    static boolean isNewer(String tag, String current) {
+        List<Integer> a = numbers(tag), b = numbers(current);
+        for (int i = 0; i < Math.max(a.size(), b.size()); i++) {
+            int x = i < a.size() ? a.get(i) : 0, y = i < b.size() ? b.get(i) : 0;
+            if (x != y) return x > y;
+        }
+        return false;
+    }
+
+    private static List<Integer> numbers(String s) {
+        List<Integer> out = new ArrayList<>();
+        Matcher m = Pattern.compile("\\d+").matcher(s);
+        while (m.find()) out.add(Integer.parseInt(m.group()));
+        return out;
+    }
+
+    // ---------------- HTTP ----------------
+
+    private void acceptLoop(ServerSocket socket) {
+        while (true) {
+            try {
+                Socket s = socket.accept();
+                Thread t = new Thread(() -> handle(s), "sharepack-conn");
+                t.setDaemon(true);
+                t.start();
+            } catch (IOException e) {
+                log(tr("Ошибка приёма соединения: ", "Accept failed: ") + e);
+            }
+        }
+    }
+
+    private void handle(Socket s) {
+        try (Socket sock = s) {
+            sock.setSoTimeout(15000);
+            BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1));
+            String requestLine = in.readLine();
+            if (requestLine == null) return;
+            String line;
+            while ((line = in.readLine()) != null && !line.isEmpty()) { /* headers are not needed */ }
+            OutputStream out = new BufferedOutputStream(sock.getOutputStream());
+            String[] parts = requestLine.split(" ");
+            if (parts.length < 2 || !(parts[0].equals("GET") || parts[0].equals("HEAD"))) {
+                sendError(out, 405);
+                return;
+            }
+            serve(parts[0].equals("HEAD"), parts[1], out);
+            out.flush();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private void serve(boolean head, String rawPath, OutputStream out) throws IOException {
+        String path = URLDecoder.decode(rawPath.split("\\?")[0].replace("+", "%2B"), "UTF-8");
+        String[] seg = path.replaceFirst("^/+", "").split("/", 3);
+        // Wrong key: answer 404 as if nothing is there.
+        if (seg.length < 2 || !MessageDigest.isEqual(seg[0].toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII),
+                key.getBytes(StandardCharsets.US_ASCII))) {
+            sendError(out, 404);
+            return;
+        }
+        if (seg.length == 2 && seg[1].equals("manifest.json")) {
+            byte[] body;
+            try {
+                body = buildManifest().getBytes(StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                log(tr("Не удалось собрать список файлов: ", "Failed to build the file list: ") + e);
+                sendError(out, 500);
+                return;
+            }
+            sendHeaders(out, 200, "application/json; charset=utf-8", body.length);
+            if (!head) out.write(body);
+            return;
+        }
+        if (seg.length == 3 && (seg[1].equals("files") || seg[1].equals("defaults"))) {
+            File base = new File(dir, seg[1]).getCanonicalFile();
+            File f = new File(base, seg[2]).getCanonicalFile();
+            if (f.isFile() && f.getPath().startsWith(base.getPath() + File.separator)) {
+                sendHeaders(out, 200, "application/octet-stream", f.length());
+                if (!head) {
+                    try (InputStream fin = new FileInputStream(f)) {
+                        copy(fin, out);
+                    }
+                }
+                return;
+            }
+        }
+        sendError(out, 404);
+    }
+
+    private static void sendHeaders(OutputStream out, int status, String type, long length) throws IOException {
+        String reason = status == 200 ? "OK" : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed" : "Error";
+        out.write(("HTTP/1.1 " + status + " " + reason + "\r\n"
+                + "Content-Type: " + type + "\r\n"
+                + "Content-Length: " + length + "\r\n"
+                + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+    }
+
+    private static void sendError(OutputStream out, int status) throws IOException {
+        sendHeaders(out, status, "text/plain", 0);
+        out.flush();
+    }
+
+    // ---------------- Manifest ----------------
+
+    private String buildManifest() throws IOException {
+        String pack = new String(readAll(new FileInputStream(new File(dir, "pack.json"))), StandardCharsets.UTF_8).trim();
+        if (pack.startsWith("﻿")) pack = pack.substring(1);
+        pack = fillAuto(pack);
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"pack\":").append(pack);
+        sb.append(",\"server_port\":").append(readServerPort());
+        sb.append(",\"files\":[");
+        Set<String> seen = new HashSet<>();
+        boolean first = true;
+        for (String src : new String[]{"files", "defaults"}) {
+            File base = new File(dir, src);
+            List<File> all = new ArrayList<>();
+            collect(base, all);
+            for (File f : all) {
+                String rel = base.toURI().relativize(f.toURI()).getPath();
+                if (!seen.add(rel)) continue;
+                String[] h = sha1(f);
+                if (!first) sb.append(',');
+                first = false;
+                sb.append("{\"path\":").append(jsonString(rel))
+                        .append(",\"sha1\":\"").append(h[0])
+                        .append("\",\"size\":").append(f.length())
+                        .append(",\"src\":\"").append(src)
+                        .append("\",\"default\":").append(src.equals("defaults"))
+                        .append('}');
+            }
+        }
+        return sb.append("]}").toString();
+    }
+
+    /** Replaces "auto" (or a missing field) in pack.json with what the server is running. */
+    private String fillAuto(String pack) {
+        pack = fillField(pack, "minecraft", game.minecraft);
+        pack = fillField(pack, "loader", game.loader);
+        String loader = jsonField(pack, "loader");
+        // A loader version only makes sense for the loader it was detected for; "" means the latest one.
+        boolean same = loader != null && loader.trim().equalsIgnoreCase(String.valueOf(game.loader));
+        return fillField(pack, "loader_version", same && game.loaderVersion != null ? game.loaderVersion : "");
+    }
+
+    private static String fillField(String json, String field, String value) {
+        if (value == null) return json;
+        Matcher m = Pattern.compile("(\"" + field + "\"\\s*:\\s*)\"\\s*auto\\s*\"", Pattern.CASE_INSENSITIVE).matcher(json);
+        if (m.find()) return json.substring(0, m.start()) + m.group(1) + jsonString(value) + json.substring(m.end());
+        if (jsonField(json, field) == null && !json.contains("\"" + field + "\"")) {
+            int brace = json.indexOf('{');
+            if (brace >= 0) return json.substring(0, brace + 1) + jsonString(field) + ":" + jsonString(value) + ","
+                    + json.substring(brace + 1);
+        }
+        return json;
+    }
+
+    /** Game port, so the launcher can add the server to the in-game list. */
+    private static int readServerPort() {
+        try {
+            return Integer.parseInt(readServerProperty("server-port", "25565").trim());
+        } catch (NumberFormatException e) {
+            return 25565;
+        }
+    }
+
+    private static String readServerProperty(String name, String def) {
+        Properties p = new Properties();
+        try (InputStream in = new FileInputStream("server.properties")) {
+            p.load(in);
+            return p.getProperty(name, def);
+        } catch (IOException e) {
+            return def;
+        }
+    }
+
+    private static void collect(File d, List<File> out) {
+        File[] list = d.listFiles();
+        if (list == null) return;
+        Arrays.sort(list);
+        for (File f : list) {
+            if (f.isDirectory()) collect(f, out);
+            else out.add(f);
+        }
+    }
+
+    private String[] sha1(File f) throws IOException {
+        String cacheKey = f.getPath() + "|" + f.length() + "|" + f.lastModified();
+        String[] cached = hashCache.get(cacheKey);
+        if (cached != null) return cached;
+        try (InputStream in = new FileInputStream(f)) {
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            String[] h = {bytesToHex(md.digest())};
+            hashCache.put(cacheKey, h);
+            return h;
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+    }
+
+    // ---------------- Helpers ----------------
+
+    static byte[] httpGet(String url) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(5000);
+        c.setReadTimeout(5000);
+        c.setRequestProperty("User-Agent", "sharepack-server/" + VERSION);
+        return readAll(c.getInputStream());
+    }
+
+    /** Value of a top-level string field. Enough for pack.json and GitHub responses. */
+    static String jsonField(String json, String field) {
+        Matcher m = Pattern.compile("\"" + Pattern.quote(field) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(json);
+        return m.find() ? m.group(1).replace("\\/", "/").replace("\\\"", "\"").replace("\\\\", "\\") : null;
+    }
+
+    static String jsonString(String s) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (char c : s.toCharArray()) {
+            if (c == '"' || c == '\\') sb.append('\\').append(c);
+            else if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+            else sb.append(c);
+        }
+        return sb.append('"').toString();
+    }
+
+    private static void writeText(File f, String text) throws IOException {
+        f.getParentFile().mkdirs();
+        try (Writer w = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8)) {
+            w.write(text);
+        }
+    }
+
+    static byte[] readAll(InputStream in) throws IOException {
+        try (InputStream i = in) {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            copy(i, bo);
+            return bo.toByteArray();
+        }
+    }
+
+    private static void copy(InputStream in, OutputStream out) throws IOException {
+        byte[] buf = new byte[1 << 16];
+        int n;
+        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+    }
+
+    static String bytesToHex(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) sb.append(String.format("%02x", x & 0xff));
+        return sb.toString();
+    }
+
+    static byte[] hexToBytes(String s) {
+        byte[] b = new byte[s.length() / 2];
+        for (int i = 0; i < b.length; i++) b[i] = (byte) Integer.parseInt(s.substring(i * 2, i * 2 + 2), 16);
+        return b;
+    }
+}

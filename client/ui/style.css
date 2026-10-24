@@ -1,0 +1,262 @@
+/* Sizes come from the Figma mockup. The window has a fixed size, so the layout is absolute;
+   on large screens everything is scaled with zoom (see app.js). */
+@font-face { font-family: "Minecraft Rus"; src: url("assets/minecraft-rus.ttf"); }
+@font-face { font-family: "Ubuntu Mono"; src: url("assets/ubuntu-mono.ttf"); }
+
+:root {
+  --bg: #0b0b0b;
+  --input: #121212;
+  --input-hover: #181818;
+  --list: #151515;
+  --button: #414141;
+  --button-hover: #4a4a4a;
+  --button-border: #2d2d2d;
+  --button-text: #888;
+  --console: #020202;
+  --error: #ff7a7a;
+  --ok: #3b7a2a;
+  --ok-hover: #448c31;
+  --ok-border: #2a581e;
+  --bad: #7a2e2a;
+  --bad-border: #57201d;
+  --close-hover: #c42b1c;
+  --font-ui: "Segoe UI", sans-serif;
+  --font-pixel: "Minecraft Rus", monospace;
+  --font-mono: "Ubuntu Mono", monospace;
+  --fade: 220ms;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 426px; height: 360px; overflow: hidden;
+  background: var(--bg); color: #fff;
+  user-select: none; -webkit-user-select: none;
+}
+button, input { font: inherit; color: inherit; border: 0; outline: 0; background: none; }
+
+/* screen transitions */
+.screen {
+  position: absolute; inset: 0; overflow: hidden; background: var(--bg);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+}
+.screen.is-active {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transition: opacity var(--fade) ease, visibility 0s;
+}
+.screen .content { position: absolute; inset: 0; transform: translateY(4px); transition: transform var(--fade) ease; }
+.screen.is-active .content { transform: none; }
+
+/* Background: image + radial shade (same gradient as in Figma) */
+.bg { position: absolute; left: 0; top: 0; width: 514px; height: 360px; pointer-events: none; }
+.bg-img { position: absolute; left: 7.45%; top: 0.09%; width: 100.1%; height: 100%; }
+.bg-shade { position: absolute; inset: 0; }
+.bg-shade--main {
+  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 514 360' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'><rect x='0' y='0' height='100%' width='100%' fill='url(%23grad)' opacity='1'/><defs><radialGradient id='grad' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='10' gradientTransform='matrix(35.1 -56.25 66.155 41.281 191.5 271)'><stop stop-color='rgba(0,0,0,1)' offset='0.17512'/><stop stop-color='rgba(0,0,0,0)' offset='0.54446'/></radialGradient></defs></svg>");
+}
+.bg-shade--launch {
+  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 514 360' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'><rect x='0' y='0' height='100%' width='100%' fill='url(%23grad)' opacity='1'/><defs><radialGradient id='grad' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='10' gradientTransform='matrix(17.35 -22.05 25.933 20.405 220 193.5)'><stop stop-color='rgba(0,0,0,0.92)' offset='0.22376'/><stop stop-color='rgba(0,0,0,0.61)' offset='0.67469'/><stop stop-color='rgba(0,0,0,0)' offset='0.99196'/></radialGradient></defs></svg>");
+}
+
+/* window drag area: above .content, below the window buttons */
+.drag { position: absolute; left: 0; top: 0; width: 100%; height: 38px; z-index: 4; }
+
+/* minimize and close; right edge at 415px as in the mockup */
+.window-buttons { position: absolute; right: 11px; top: 9px; height: 20px; display: flex; z-index: 5; }
+.wb {
+  width: 31px; height: 20px; display: grid; place-items: center;
+  color: rgba(255, 255, 255, 0.45); cursor: pointer; transition: background 120ms, color 120ms;
+}
+.wb svg { width: 10px; height: 10px; display: block; overflow: visible; }
+.wb:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85); }
+.wb--close:hover { background: var(--close-hover); color: #fff; }
+
+/* Header */
+.header { position: absolute; left: 30px; top: 19px; display: flex; flex-direction: column; gap: 6px; }
+.fulllogo { display: flex; align-items: center; gap: 9px; }
+.icon--43 { width: 43px; height: 43px; }
+.icon--59 { width: 59px; height: 59px; }
+.title { font-family: var(--font-pixel); font-size: 28px; line-height: normal; white-space: nowrap; }
+/* Figma line height 80.82% for Segoe UI is about 14px */
+.tagline { font-family: var(--font-ui); font-size: 13px; line-height: 14px; opacity: 0.7; white-space: nowrap; }
+
+.launch-header { position: absolute; left: 20px; top: 30px; display: flex; align-items: center; gap: 15px; }
+.launch-titles { display: flex; flex-direction: column; gap: 5px; width: 140px; }
+.tagline--wide { width: 191px; }
+
+/* Update screen: the splash header with two buttons below */
+.update-buttons { position: absolute; left: 30px; top: 104px; width: 366px; display: flex; gap: 3px; }
+.update-buttons .start { width: auto; }
+.update-download { width: 262px !important; }
+.update-later { flex: 1; color: var(--button-text); }
+
+/* Links to the right of the settings title */
+/* right edge at 396px; the language button goes left of GitHub */
+.links { position: absolute; right: 30px; top: 30px; display: flex; align-items: center; gap: 11px; z-index: 5; }
+.link--lang {
+  font-family: var(--font-pixel); font-size: 11px; line-height: 21px; height: 21px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.link { display: block; cursor: pointer; transition: filter 120ms; }
+.link img { display: block; }
+.link--github img { opacity: 0.5; }
+.link:hover { filter: brightness(1.8); }
+
+/* Small icon buttons */
+.icon-button {
+  width: 18px; height: 18px; display: grid; place-items: center; cursor: pointer;
+  color: rgba(255, 255, 255, 0.45); transition: background 120ms, color 120ms;
+}
+.icon-button svg { width: 12px; height: 12px; display: block; }
+.icon-button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.label-row { display: flex; align-items: center; justify-content: space-between; }
+
+/* Fields */
+.label { display: block; font-family: var(--font-ui); font-size: 15px; line-height: normal; opacity: 0.85; white-space: nowrap; }
+.input {
+  display: block; width: 100%; height: 28px; padding: 0 10px 0 11px;
+  background: var(--input); font-family: var(--font-ui); font-size: 10px; color: rgba(255, 255, 255, 0.85);
+  text-align: left; user-select: text; -webkit-user-select: text;
+}
+.input::placeholder { color: #fff; opacity: 0.1; }
+.input:focus, .dropdown.is-open .input { box-shadow: inset 0 0 0 1px #2a2a2a; }
+
+/* field bottom lines up with the tagline bottom (96px) */
+.nickname { position: absolute; left: 236px; top: 48px; width: 160px; display: flex; flex-direction: column; gap: 3px; }
+.label--nick { font-size: 13px; opacity: 0.7; text-align: right; }
+.nickname .input { padding-left: 9px; }
+
+.choose { position: absolute; left: 30px; top: 117px; display: flex; align-items: center; gap: 13px; }
+.field { width: 160px; display: flex; flex-direction: column; gap: 6px; }
+.or { width: 20px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.or span { font-family: var(--font-mono); font-size: 13px; line-height: normal; opacity: 0.3; }
+
+.setting { position: absolute; width: 174px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Dropdown */
+.dropdown { position: relative; }
+.dropdown .input { padding-left: 10px; padding-right: 30px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.dropdown .input:hover { background: var(--input-hover); }
+.dropdown-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown.is-empty .dropdown-label { color: rgba(255, 255, 255, 0.1); }
+.chevron { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; transition: transform 150ms ease; }
+.dropdown.is-open .chevron { transform: translateY(-50%) rotate(180deg); }
+.dropdown-list {
+  position: absolute; left: 0; right: 0; top: 30px; z-index: 10;
+  max-height: 130px; overflow-y: auto; background: var(--list); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  opacity: 0; transform: translateY(-3px); pointer-events: none; transition: opacity 120ms ease, transform 120ms ease;
+  scrollbar-width: thin; scrollbar-color: #333 transparent;
+}
+.dropdown.is-open .dropdown-list { opacity: 1; transform: none; pointer-events: auto; }
+.dropdown-item {
+  display: block; width: 100%; padding: 6px 10px; text-align: left; cursor: pointer;
+  font-family: var(--font-ui); font-size: 10px; line-height: 1.25; color: rgba(255, 255, 255, 0.75);
+}
+.dropdown-item:hover { background: #222; color: #fff; }
+.dropdown-item.is-selected { color: #fff; }
+.dropdown-item small { display: block; font-size: 9px; color: rgba(255, 255, 255, 0.3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-item--action { color: rgba(255, 255, 255, 0.5); border-top: 1px solid #222; }
+/* Nickname field: text input + arrow with saved nicknames */
+.combo .input { padding-right: 28px; cursor: text; user-select: text; -webkit-user-select: text; }
+/* translucent, since it sits on the background image */
+.nickname .input {
+  background: rgba(10, 10, 10, 0.45);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: background 120ms;
+}
+.nickname .input:hover, .nickname .input:focus, .nickname .dropdown.is-open .input { background: rgba(10, 10, 10, 0.6); }
+.combo-toggle { position: absolute; right: 0; top: 0; width: 28px; height: 28px; cursor: pointer; }
+.combo-toggle .chevron { right: 9px; }
+.combo.is-empty .combo-toggle { display: none; }
+.combo.is-empty .input { padding-right: 10px; }
+
+/* Row with buttons on the right (downloaded packs: redownload, delete) */
+.dropdown-row { display: flex; align-items: center; gap: 2px; padding-right: 4px; }
+.dropdown-row:hover { background: #222; }
+.dropdown-row .dropdown-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-row .dropdown-item:hover { background: none; }
+.dropdown-mini {
+  flex: none; width: 20px; height: 20px; display: grid; place-items: center; cursor: pointer;
+  color: rgba(255, 255, 255, 0.45); transition: background 120ms, color 120ms;
+}
+.dropdown-mini svg { width: 12px; height: 12px; display: block; }
+.dropdown-mini:hover { background: #363636; color: #fff; }
+.dropdown-mini--danger:hover, .dropdown-mini.is-armed { background: var(--bad); color: #ffd9d6; }
+/* the pack list is wider than the field to fit the buttons */
+#dd-pack .dropdown-list { left: auto; width: 220px; }
+.dropdown-item--muted { color: rgba(255, 255, 255, 0.25); cursor: default; }
+.dropdown-item--muted:hover { background: none; color: rgba(255, 255, 255, 0.25); }
+
+/* Start button and gear */
+.buttons { position: absolute; left: 30px; top: 222px; display: flex; gap: 3px; }
+.start, .gear { height: 44px; background: var(--button); border: 3px solid var(--button-border); transition: background 150ms, border-color 150ms, color 150ms; }
+.start {
+  width: 319px; font-family: var(--font-pixel); font-size: 10px; color: var(--button-text);
+  white-space: nowrap; cursor: default;
+}
+.start--ready { color: #d6d6d6; cursor: pointer; }
+.start--ready:hover { background: var(--button-hover); }
+.start--ready:active { background: #3a3a3a; }
+/* ready to play */
+.start--ok { background: var(--ok); border-color: var(--ok-border); color: #e6f7df; cursor: pointer; }
+.start--ok:hover { background: var(--ok-hover); }
+.start--ok:active { background: var(--ok-border); }
+/* Download: the button fills with green from the left (--p from 0 to 1, set by app.js) */
+.start { position: relative; z-index: 0; }
+.start::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; z-index: -1;
+  width: calc(var(--p, 0) * 100%); background: var(--ok);
+  opacity: 0; transition: width 300ms ease, opacity 200ms;
+}
+.start--progress { color: #e6f7df; }
+.start--progress::before { opacity: 1; }
+/* error */
+.start--error { background: var(--bad); border-color: var(--bad-border); color: #ffd9d6; }
+.gear { position: relative; width: 44px; cursor: pointer; }
+.gear img { position: absolute; left: 5px; top: 5px; width: 28px; height: 28px; mix-blend-mode: multiply; }
+.gear:hover { background: var(--button-hover); }
+
+/* Console */
+.console { position: absolute; left: 18px; top: 281px; width: 389px; height: 79px; background: var(--console); overflow: hidden; }
+.console-text {
+  position: absolute; left: 16px; top: 11px; right: 14px; bottom: 6px; overflow-y: auto;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.334; color: rgba(255, 255, 255, 0.3);
+  white-space: pre-wrap; word-break: break-word; scrollbar-width: none;
+  user-select: text; -webkit-user-select: text;
+}
+.console-text::-webkit-scrollbar { display: none; }
+.console-text .err { color: var(--error); opacity: 0.85; }
+.console-text .warn { color: #e6c46a; opacity: 0.85; }
+.console-text .val { color: rgba(255, 255, 255, 0.75); }
+.console-text .val--ok { color: #8fd46f; }
+.console-text .val--err { color: var(--error); }
+/* Two info columns: pack on the left, loader and status on the right */
+.console-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+.console-cols > div { min-width: 0; }
+.console-cols p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.console-errors { margin-bottom: 4px; }
+/* scrollbar in place of the mockup line (2x59); updateScrollbars sizes and moves the thumb */
+.console-scroll { position: absolute; left: 383px; top: 11px; width: 4px; height: 59px; cursor: pointer; }
+.console-thumb {
+  position: absolute; left: 1px; top: 0; width: 2px; height: 59px; background: #505050;
+  transition: background 120ms;
+}
+.console-scroll:hover .console-thumb, .console-scroll.is-dragging .console-thumb { background: #7a7a7a; }
+
+/* collapsed console (set_console in launcher.py shrinks the window) */
+.console { transition: height var(--fade) ease; }
+.console-text { right: 30px; }
+.console-toggle {
+  position: absolute; right: 12px; top: 8px; width: 14px; height: 14px; display: grid; place-items: center;
+  color: rgba(255, 255, 255, 0.3); cursor: pointer;
+}
+.console-toggle svg { width: 12px; height: 12px; display: block; }
+.console-toggle:hover { color: #fff; }
+.console-bar {
+  display: none; width: 100%; height: 100%; cursor: pointer;
+  font-family: var(--font-mono); font-size: 9px; line-height: 14px; color: rgba(255, 255, 255, 0.3);
+}
+.console-bar:hover { color: rgba(255, 255, 255, 0.7); }
+body.console-hidden .console { height: 14px; }
+body.console-hidden .console-text, body.console-hidden .console-scroll, body.console-hidden .console-toggle { display: none; }
+body.console-hidden .console-bar { display: block; }
