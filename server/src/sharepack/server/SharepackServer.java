@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  *   defaults/          copied to players once, never overwritten
  */
 public final class SharepackServer {
-    static final String VERSION = "v2026.b2";
+    static final String VERSION = "v2026.b3";
     static final String RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest";
     private static final String DIR = "sharepack";
     private static final String OLD_DIR = "packserver";
