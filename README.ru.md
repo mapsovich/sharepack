@@ -1,4 +1,4 @@
-![sharepack](docs/banner.ru.png)
+<img src="docs/screenshot.ru.png" width="418" alt="лаунчер sharepack">
 
 [English](README.md) | **Русский**
 
