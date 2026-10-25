@@ -50,13 +50,17 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 
 /* Background: image + radial shade (same gradient as in Figma) */
 .bg { position: absolute; left: 0; top: 0; width: 514px; height: 360px; pointer-events: none; }
-.bg-img { position: absolute; left: 7.45%; top: 0.09%; width: 100.1%; height: 100%; }
+.bg-img { position: absolute; left: -63px; top: -57px; width: 640px; height: 360px; }
+/* splash and update windows: the same crop as the README banner */
+.bg--launch .bg-img { left: -58px; top: -74px; width: 552px; height: 310px; }
 .bg-shade { position: absolute; inset: 0; }
 .bg-shade--main {
   background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 514 360' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'><rect x='0' y='0' height='100%' width='100%' fill='url(%23grad)' opacity='1'/><defs><radialGradient id='grad' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='10' gradientTransform='matrix(35.1 -56.25 66.155 41.281 191.5 271)'><stop stop-color='rgba(0,0,0,1)' offset='0.17512'/><stop stop-color='rgba(0,0,0,0)' offset='0.54446'/></radialGradient></defs></svg>");
 }
 .bg-shade--launch {
-  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 514 360' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'><rect x='0' y='0' height='100%' width='100%' fill='url(%23grad)' opacity='1'/><defs><radialGradient id='grad' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='10' gradientTransform='matrix(17.35 -22.05 25.933 20.405 220 193.5)'><stop stop-color='rgba(0,0,0,0.92)' offset='0.22376'/><stop stop-color='rgba(0,0,0,0.61)' offset='0.67469'/><stop stop-color='rgba(0,0,0,0)' offset='0.99196'/></radialGradient></defs></svg>");
+  /* matched to the README banner: dark behind the title, lighter to the right */
+  background: radial-gradient(250px 190px at 180px 110px,
+    rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.6) 48%, rgba(0, 0, 0, 0.15) 84%, rgba(0, 0, 0, 0) 100%);
 }
 
 /* window drag area: above .content, below the window buttons */
