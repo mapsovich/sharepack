@@ -1,4 +1,4 @@
-<img src="docs/screenshot.ru.png" width="418" alt="лаунчер sharepack">
+![sharepack](docs/banner.ru.png)
 
 [English](README.md) | **Русский**
 
@@ -9,6 +9,10 @@
 Владелец сервера устанавливает `sharepack-server.jar`, кладёт клиентские моды в папку и получает код. Игроки вводят в `sharepack.exe` никнейм и код. Лаунчер скачивает игру, Java, загрузчик модов и моды напрямую с сервера владельца. Центрального сервера нет.
 
 Загрузка: [последний релиз](https://github.com/mapsovich/sharepack/releases/latest).
+
+## Скриншоты
+
+<img src="docs/screenshot-main.ru.png" width="400" alt="Главный экран"> <img src="docs/screenshot-settings.ru.png" width="400" alt="Настройки">
 
 ## Владельцу сервера
 

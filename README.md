@@ -1,4 +1,4 @@
-<img src="docs/screenshot.png" width="418" alt="sharepack launcher">
+![sharepack](docs/banner.png)
 
 **English** | [Русский](README.ru.md)
 
@@ -9,6 +9,10 @@ A Minecraft launcher that installs a server's modpack from a single code.
 The server owner installs `sharepack-server.jar`, puts the client mods into a folder and gets a code. Players enter a nickname and the code in `sharepack.exe`. The launcher downloads the game, Java, the mod loader and the mods directly from the owner's server. No central server is involved.
 
 Downloads: [latest release](https://github.com/mapsovich/sharepack/releases/latest).
+
+## Screenshots
+
+<img src="docs/screenshot-main.png" width="400" alt="Main screen"> <img src="docs/screenshot-settings.png" width="400" alt="Settings">
 
 ## Server owners
 
