@@ -75,6 +75,19 @@ Files can be changed while the server is running: the launcher compares them on 
 - `public-address`: public IP or domain. If empty, the address is detected in this order: the hosting panel IP (`SERVER_IP` on Pterodactyl/Pelican), `server-ip` from `server.properties`, then api.ipify.org. The detected address is printed in the console. With a dynamic home IP, use a domain (for example from DuckDNS) so the code doesn't change.
 - `key`: secret key, part of the code. Delete the line to generate a new key; the old code stops working. Codes made before v2026.b2 are replaced automatically on the first start.
 
+### Without a game server (single-player world)
+
+You can play in your own single-player world opened to LAN, with no game server and no hosting:
+
+1. Put `sharepack-server.jar` into any folder and run `java -jar sharepack-server.jar` there.
+2. Without a game server the version can't be detected, so set `minecraft`, `loader` and, if needed, `loader_version` in `sharepack/pack.json` instead of `auto`.
+3. Put [LAN World Plug-n-Play](https://modrinth.com/mod/mcwifipnp) into `files/mods/`, and on Fabric or Quilt also [Fabric API](https://modrinth.com/mod/fabric-api). Without it, a world opened to LAN asks every player for a Microsoft account and nickname-only players can't join.
+4. Open the pack port (TCP 25566) on your router, as for a home server.
+5. Start the game from the launcher, open your world, press Esc → "Open to LAN", turn **Online Mode** off and open the world. The mod tries to forward the world port through UPnP and prints the addresses in the chat. If your router doesn't support UPnP, forward that port by hand; set a fixed port in the same screen so it doesn't change.
+6. Friends join with "Multiplayer" → "Direct Connection" and your address with the world port. To get the right server in their list, set `server` in `pack.json` to `"address:port"`.
+
+Friends can play only while your game and `sharepack-server.jar` are running. Tested with Fabric 1.21.1.
+
 ## Players
 
 Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be kept anywhere; settings and game files are stored in `%APPDATA%\sharepack`.
