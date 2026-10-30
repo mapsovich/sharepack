@@ -21,6 +21,8 @@ STRINGS = {
     "net_retry": ("соединение прервано, повторная попытка ({attempt})...",
                   "connection lost, retrying (attempt {attempt})..."),
     "installing_java": ("установка Java...", "installing Java..."),
+    "installing_temurin": ("загрузка Java {major} (Eclipse Temurin)...", "downloading Java {major} (Eclipse Temurin)..."),
+    "mirror_on": ("{host} недоступен, загрузка через зеркало BMCLAPI", "{host} is unreachable, downloading from the BMCLAPI mirror"),
     "using_java": ("используется уже установленная {label}", "using the installed {label}"),
     "installing_mc": ("установка Minecraft {mc}...", "installing Minecraft {mc}..."),
     "installing_loader": ("установка {loader} {version}...", "installing {loader} {version}..."),

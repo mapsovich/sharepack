@@ -96,7 +96,8 @@ Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be
 - Saved nicknames open with the arrow in the nickname field.
 - Packs that were played before are listed under "choose a pack", so the code is needed only once. Each pack has buttons to open its folder, redownload it (worlds, screenshots and `options.txt` are kept) and delete it (two clicks).
 - The settings (gear icon) contain the profiles folder, RAM (`4096` or `4G`), a custom `java.exe` and Java arguments.
-- Java: the one chosen in the settings; otherwise a Java of the version the game needs that is already on the computer (Minecraft Launcher, Prism, Adoptium and others); otherwise it is downloaded from Mojang once into `profilesuntime` and shared by all packs.
+- Java: the one chosen in the settings; otherwise a Java of the version the game needs that is already on the computer (Minecraft Launcher, Prism, Adoptium and others); otherwise it is downloaded from Mojang once into `profiles\runtime` and shared by all packs. If Mojang's Java can't be downloaded even from the mirror, Eclipse Temurin of the same version is downloaded from GitHub or the TUNA mirror.
+- If Mojang, Forge, NeoForge or Fabric servers are blocked for the player (the download fails or stops), the launcher downloads from the [BMCLAPI](https://bmclapi2.bangbang93.com) mirror instead, with no VPN needed. Files are checked against the hashes from the game's file lists. The mirror doesn't serve the Minecraft client jar itself (it sends to Mojang for it), and Quilt has no mirror.
 - The language follows Windows and can be switched with the `RU`/`EN` button in the settings.
 - The light or dark theme also follows Windows; the button next to `RU`/`EN` switches between same as Windows, light and dark.
 - Requires Microsoft Edge WebView2, which is included in Windows 10 and 11.

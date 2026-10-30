@@ -20,12 +20,17 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import urllib.parse
 import webbrowser
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 import minecraft_launcher_lib as mll
 import requests
+import urllib3
 import webview
+from minecraft_launcher_lib._helper import download_file, get_library_path
 
 import i18n
 from i18n import t
@@ -231,6 +236,143 @@ def open_path(path):
     os.startfile(path)
 
 
+# ---------------- Mirror ----------------
+
+# Mojang, Forge, NeoForge and Fabric servers are blocked for some players. BMCLAPI mirrors all of them;
+# a server that fails MIRROR_AFTER times in a row goes to the mirror until the launcher is closed.
+MIRROR = "https://bmclapi2.bangbang93.com"
+MIRRORED = {
+    "https://launchermeta.mojang.com": MIRROR,
+    "https://launcher.mojang.com": MIRROR,
+    "https://piston-meta.mojang.com": MIRROR,
+    "https://piston-data.mojang.com": MIRROR,
+    "https://libraries.minecraft.net": MIRROR + "/maven",
+    "https://resources.download.minecraft.net": MIRROR + "/assets",
+    "https://maven.minecraftforge.net": MIRROR + "/maven",
+    "https://maven.neoforged.net/releases": MIRROR + "/maven",
+    "https://maven.fabricmc.net": MIRROR + "/maven",
+    "https://meta.fabricmc.net": MIRROR + "/fabric-meta",
+}
+MIRROR_AFTER = 3  # a single dropped connection is just repeated
+_mirrored_now = set()
+_failures = {}
+_mirror_lock = threading.Lock()
+# The mirror allows 10 requests a minute for one file, and the Java runtime has dozens of identical files
+# (licenses) under one URL. So the node the mirror sends a file to is remembered for a few minutes.
+_mirror_redirects = {}  # mirror url -> (file url, time)
+_url_locks = {}
+mirror_notice = None  # status function of the running install
+
+
+def _official_failed(prefix):
+    """Counts a failure of the original server; True when it goes to the mirror from now on."""
+    with _mirror_lock:
+        if prefix in _mirrored_now:
+            return True
+        _failures[prefix] = _failures.get(prefix, 0) + 1
+        if _failures[prefix] < MIRROR_AFTER:
+            return False
+        _mirrored_now.add(prefix)
+    if mirror_notice:
+        mirror_notice(t("mirror_on", host=urllib.parse.urlparse(prefix).hostname))
+    return True
+
+
+def _send_with_mirror(self, request, **kwargs):
+    prefix = next((p for p in MIRRORED if request.url.startswith(p + "/")), None)
+    if not prefix:
+        return _send(self, request, **kwargs)
+    # the original server first; a failed connection is repeated right away, a blocked server keeps failing
+    while prefix not in _mirrored_now:
+        try:
+            r = _send(self, request, **kwargs)
+        except (requests.ConnectionError, requests.Timeout):
+            if not _official_failed(prefix):
+                time.sleep(1)
+            continue
+        # 403/451: blocked by country or by the provider
+        if r.status_code not in (403, 451):
+            _failures[prefix] = 0
+            _watch_body(r, prefix)
+            return r
+        r.close()
+        _official_failed(prefix)
+    url = MIRRORED[prefix] + request.url[len(prefix):]
+    with _mirror_lock:
+        lock = _url_locks.setdefault(url, threading.Lock())
+    request = request.copy()
+    error = None
+    # The mirror sends each file to one of its nodes; a node that fails gets replaced by asking again
+    for _ in range(3):
+        with lock:
+            cached = _mirror_redirects.get(url)
+            if cached and time.time() - cached[1] < 300:
+                location = cached[0]
+            else:
+                request.url = url
+                try:
+                    r = _send_to_mirror(self, request, **kwargs)
+                except (requests.ConnectionError, requests.Timeout) as e:
+                    error = e
+                    continue
+                if not r.is_redirect:
+                    return r
+                r.close()
+                location = r.headers["Location"]
+                _mirror_redirects[url] = (location, time.time())
+        request.url = location
+        if any(location.startswith(p + "/") for p in MIRRORED):
+            # the mirror doesn't have the file and sends to the original server: one try there, no loop
+            return _send(self, request, **kwargs)
+        try:
+            r = _send(self, request, **kwargs)
+            if r.status_code < 400:
+                return r
+            r.close()
+            error = requests.HTTPError(f"{location}: {r.status_code}", response=r)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            error = e
+        _mirror_redirects.pop(url, None)
+    # minecraft-launcher-lib skips a file that didn't come; an error makes the install retry it
+    raise error
+
+
+def _send_to_mirror(self, request, **kwargs):
+    for _ in range(3):
+        r = _send(self, request, **kwargs)
+        if r.status_code != 429:
+            return r
+        # the mirror says when its limit resets
+        time.sleep(min(int(r.headers.get("X-RateLimit-Reset-short") or 10), 60) + 1)
+    raise requests.HTTPError(f"{MIRROR}: 429 Too Many Requests", response=r)
+
+
+def _watch_body(r, prefix):
+    """A download that stops in the middle (some providers cut connections to blocked servers after the first bytes)
+    counts as a failure too; the install retries it."""
+    for name in ("read", "read_chunked"):
+        method = getattr(r.raw, name, None)
+        if method:
+            def guarded(*args, _method=method, **kwargs):
+                try:
+                    return _method(*args, **kwargs)
+                except Exception:
+                    _official_failed(prefix)
+                    raise
+            setattr(r.raw, name, guarded)
+
+
+_send = requests.adapters.HTTPAdapter.send
+requests.adapters.HTTPAdapter.send = _send_with_mirror
+
+FABRIC_PROFILE = "https://meta.fabricmc.net/v2/versions/loader/{mc}/{loader}/profile/json"
+NEOFORGE_INSTALLER = ("https://maven.neoforged.net/releases/net/neoforged/neoforge/{version}/"
+                      "neoforge-{version}-installer.jar")
+# Java when Mojang's runtime can't be downloaded even from the mirror: one zip instead of hundreds of files
+TEMURIN_API = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot"
+TEMURIN_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{major}/jre/x64/windows/{name}"
+
+
 # network errors in the Forge/NeoForge installer output
 NETWORK_ERROR_RE = re.compile(r"SSLException|SSLHandshake|SocketException|SocketTimeout|ConnectException|"
                               r"UnknownHost|Connection reset|timed out|NoRouteToHost|EOFException|"
@@ -241,8 +383,11 @@ def installer_failure(e):
     """(step, error line) from the output of a failed installer."""
     cmd = list(e.cmd) if isinstance(e.cmd, (list, tuple)) else [str(e.cmd)]
     task = cmd[cmd.index("--task") + 1] if "--task" in cmd[:-1] else (cmd[3] if len(cmd) > 3 else "?")
-    lines = [l.strip() for l in (e.stderr or b"").decode(errors="replace").splitlines() if l.strip()]
-    error = next((l for l in lines if not l.startswith("at ") and not l.startswith("...")), "") or t("exit_code", code=e.returncode)
+    lines = [l.strip() for l in (e.stderr or e.output or b"").decode(errors="replace").splitlines() if l.strip()]
+    # the NeoForge installer logs everything to stdout and ends with "Failed to run processor: ..."
+    error = (next((l for l in lines if l.startswith("Failed to")), "")
+             or next((l for l in lines if not l.startswith("at ") and not l.startswith("...")), "")
+             or t("exit_code", code=e.returncode))
     return task, error[:300]
 
 
@@ -423,6 +568,30 @@ def no_java_download():
         yield
     finally:
         mll.install.install_jvm_runtime = original
+
+
+@contextlib.contextmanager
+def forge_mappings_here(download):
+    """minecraft-launcher-lib runs Forge's DOWNLOAD_MOJMAPS step in Java, which goes to Mojang past the mirror.
+    Here that step is done by download(minecraft version, output path) instead."""
+    forge = sys.modules["minecraft_launcher_lib.mod_loader._forge"]
+
+    class Subprocess:
+        def __getattr__(self, name):
+            return getattr(subprocess, name)
+
+        @staticmethod
+        def run(command, **kwargs):
+            if "DOWNLOAD_MOJMAPS" not in command:
+                return subprocess.run(command, **kwargs)
+            download(command[command.index("--version") + 1], command[command.index("--output") + 1])
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    forge.subprocess = Subprocess()
+    try:
+        yield
+    finally:
+        forge.subprocess = subprocess
 
 
 def find_javas():
@@ -667,12 +836,16 @@ class Installer:
     def install_game(self, m, max_stalls=3):
         """Installs the game, retrying on network errors (downloaded files are verified by hash and not fetched
         again). Gives up after several attempts in a row without progress."""
+        global mirror_notice
+        mirror_notice = self.status
         stalls, attempt = 0, 1
         while True:
             before = self._downloaded_files()
             try:
                 return self._install_game(m)
-            except (requests.RequestException, subprocess.CalledProcessError) as e:
+            # urllib3 and InvalidChecksum: a download broken off in the middle
+            except (requests.RequestException, urllib3.exceptions.HTTPError, mll.exceptions.InvalidChecksum,
+                    subprocess.CalledProcessError) as e:
                 if isinstance(e, subprocess.CalledProcessError):
                     # the Forge/NeoForge installer downloads too: retry network errors, report the rest
                     task, error = installer_failure(e)
@@ -694,13 +867,17 @@ class Installer:
 
     def _install_game(self, m):
         mc = m["minecraft"]
-        loader = m.get("loader", "vanilla")
         os.makedirs(self.game_dir, exist_ok=True)
         self.status(t("installing_mc", mc=mc))
         # vanilla first, then Java (the loader installers need it)
         with no_java_download():
             mll.install.install_minecraft_version(mc, self.game_dir, callback=self.callback())
-        self.java = self._pick_java(mc)
+            self.java = self._pick_java(mc)
+            return self._install_loader(m)
+
+    def _install_loader(self, m):
+        mc = m["minecraft"]
+        loader = m.get("loader", "vanilla")
         if loader == "vanilla":
             self.progress(PROGRESS_LOADER[1])
             return mc
@@ -715,12 +892,73 @@ class Installer:
         markers = [done_marker] + [os.path.join(version_dir, f".{name}-installed") for name in OLD_NAMES]
         if not any(os.path.isfile(p) for p in markers):
             self.status(t("installing_loader", loader=loader, version=loader_version))
-            ml.install(mc, self.game_dir, loader_version=loader_version, callback=self.callback(PROGRESS_LOADER),
-                       java=self.java)
+            if loader == "neoforge":
+                self._install_neoforge(mc, NEOFORGE_INSTALLER.format(version=loader_version),
+                                       self.callback(PROGRESS_LOADER))
+            elif loader == "fabric":
+                self._install_fabric(mc, loader_version)
+            else:
+                with forge_mappings_here(self._download_mappings):
+                    ml.install(mc, self.game_dir, loader_version=loader_version,
+                               callback=self.callback(PROGRESS_LOADER), java=self.java)
             with open(done_marker, "w") as f:
                 f.write(loader_version)
         self.progress(PROGRESS_LOADER[1])
         return version_id
+
+    def _install_fabric(self, mc, loader_version):
+        """Fabric's installer is a Java program that downloads past the mirror. All it makes is this profile
+        from Fabric's server; the libraries in it are downloaded by minecraft-launcher-lib."""
+        r = requests.get(FABRIC_PROFILE.format(mc=mc, loader=loader_version), timeout=15)
+        r.raise_for_status()
+        profile = r.json()
+        version_dir = os.path.join(self.game_dir, "versions", profile["id"])
+        os.makedirs(version_dir, exist_ok=True)
+        with open(os.path.join(version_dir, f"{profile['id']}.json"), "w", encoding="utf-8") as f:
+            json.dump(profile, f, indent=2)
+        mll.install.install_minecraft_version(profile["id"], self.game_dir, callback=self.callback(PROGRESS_LOADER))
+
+    def _install_neoforge(self, mc, installer_url, callback):
+        """The official installer downloads everything itself, past the mirror. So the files are downloaded here and
+        the installer runs offline. Its mappings step downloads from Mojang even offline; it is removed and the
+        mappings are downloaded here too."""
+        with tempfile.TemporaryDirectory(prefix="sharepack-") as tmp:
+            original = os.path.join(tmp, "original.jar")
+            download_file(installer_url, original)
+            installer = os.path.join(tmp, "installer.jar")
+            with zipfile.ZipFile(original) as src, zipfile.ZipFile(installer, "w", zipfile.ZIP_DEFLATED) as dst:
+                profile = json.loads(src.read("install_profile.json"))
+                libraries = profile["libraries"] + json.loads(src.read("version.json"))["libraries"]
+                profile["processors"] = [p for p in profile["processors"] if "DOWNLOAD_MOJMAPS" not in p["args"]]
+                for item in src.infolist():
+                    # a signature would no longer match the changed profile
+                    if re.fullmatch(r"META-INF/[^/]+\.(SF|RSA|DSA|EC)", item.filename):
+                        continue
+                    body = json.dumps(profile) if item.filename == "install_profile.json" else src.read(item)
+                    dst.writestr(item, body)
+            files = [lib["downloads"]["artifact"] for lib in libraries
+                     if lib.get("downloads", {}).get("artifact", {}).get("url")]
+            callback["setMax"](len(files))
+            with ThreadPoolExecutor(8) as pool:
+                for i, _ in enumerate(pool.map(lambda a: download_file(
+                        a["url"], os.path.join(self.game_dir, "libraries", a["path"]), sha1=a["sha1"],
+                        minecraft_directory=self.game_dir), files)):
+                    callback["setProgress"](i + 1)
+            if "MOJMAPS" in profile.get("data", {}):
+                self._download_mappings(mc, get_library_path(profile["data"]["MOJMAPS"]["client"][1:-1], self.game_dir))
+            profiles = os.path.join(self.game_dir, "launcher_profiles.json")
+            if not os.path.isfile(profiles):
+                with open(profiles, "w") as f:
+                    f.write('{"profiles": {}}')
+            subprocess.run([self.java, "-jar", installer, "--install-client", self.game_dir, "--offline"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=tmp, check=True,
+                           creationflags=NO_WINDOW)
+
+    def _download_mappings(self, mc, path):
+        """Mojang's mappings for Forge/NeoForge, the file their DOWNLOAD_MOJMAPS step would download."""
+        with open(os.path.join(self.game_dir, "versions", mc, f"{mc}.json"), encoding="utf-8") as f:
+            mappings = json.load(f)["downloads"]["client_mappings"]
+        download_file(mappings["url"], path, sha1=mappings["sha1"], minecraft_directory=self.game_dir)
 
     def _pick_java(self, mc):
         """Java for this Minecraft version: the one chosen in settings, the shared copy from Mojang,
@@ -735,6 +973,9 @@ class Installer:
         shared = mll.runtime.get_executable_path(component, self.data_dir)
         if shared and glob.glob(os.path.join(self.data_dir, "runtime", component, "*", ".version")):
             return shared
+        temurin = os.path.join(self.data_dir, "runtime", f"temurin-{major}")
+        if os.path.isfile(os.path.join(temurin, ".version")):
+            return glob.glob(os.path.join(temurin, "*", "bin", "java.exe"))[0]
         # the exact version: old Forge doesn't start on a newer Java
         for j in find_javas():
             if j["major"] == major and not j["x86"]:
@@ -743,8 +984,52 @@ class Installer:
         self.status(t("installing_java"))
         callback = self.callback()
         callback["setStatus"]("Install java runtime")
-        mll.runtime.install_jvm_runtime(component, self.data_dir, callback=callback)
-        return mll.runtime.get_executable_path(component, self.data_dir) or "java"
+        try:
+            mll.runtime.install_jvm_runtime(component, self.data_dir, callback=callback)
+            java = mll.runtime.get_executable_path(component, self.data_dir)
+            if java:
+                return java
+        # OSError: the library didn't get a file and can't find it afterwards
+        except (requests.RequestException, urllib3.exceptions.HTTPError, mll.exceptions.InvalidChecksum, OSError):
+            pass
+        return self._download_temurin(major, temurin)
+
+    def _download_temurin(self, major, target):
+        """Eclipse Temurin JRE from GitHub or the TUNA mirror, checked by the SHA-256 from Adoptium."""
+        r = requests.get(TEMURIN_API.format(major=major), timeout=15, params={
+            "architecture": "x64", "image_type": "jre", "os": "windows", "vendor": "eclipse"})
+        r.raise_for_status()
+        package = r.json()[0]["binary"]["package"]
+        self.status(t("installing_temurin", major=major))
+        lo, hi = PROGRESS_VANILLA["Install java runtime"]
+        part = target + ".zip.part"
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        for url in (package["link"], TEMURIN_MIRROR.format(major=major, name=package["name"])):
+            h, done = hashlib.sha256(), 0
+            try:
+                # TUNA refuses the default python-requests User-Agent
+                with requests.get(url, stream=True, timeout=NET_TIMEOUT,
+                                  headers={"User-Agent": f"{TITLE}/{VERSION}"}) as resp, open(part, "wb") as f:
+                    resp.raise_for_status()
+                    for chunk in resp.iter_content(1 << 16):
+                        h.update(chunk)
+                        f.write(chunk)
+                        done += len(chunk)
+                        self.progress(lo + (hi - lo) * min(done / package["size"], 1))
+            except requests.RequestException:
+                continue
+            if h.hexdigest() == package["checksum"]:
+                break
+        else:
+            raise requests.ConnectionError(f"{package['name']}: GitHub and "
+                                           f"{urllib.parse.urlparse(TEMURIN_MIRROR).hostname}")
+        shutil.rmtree(target, ignore_errors=True)
+        with zipfile.ZipFile(part) as z:
+            z.extractall(target)
+        os.remove(part)
+        with open(os.path.join(target, ".version"), "w") as f:
+            f.write(package["name"])
+        return glob.glob(os.path.join(target, "*", "bin", "java.exe"))[0]
 
     def _move_old_runtime(self):
         """Before v2026.b8 every profile had its own Java. It becomes the shared one or is deleted."""
