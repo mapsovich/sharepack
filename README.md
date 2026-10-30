@@ -118,6 +118,7 @@ The launcher and the server part have separate version numbers (`client/VERSION`
 
 - Players log in by nickname without a Microsoft account, so the server needs `online-mode=false`. Install an authentication mod (for example EasyAuth), otherwise anyone can join under another player's nickname.
 - Hostings that provide only one port (such as Aternos) are not supported: the pack needs a second port.
+- Many home routers can't connect a computer to their own internet address, so the owner and players on the same Wi-Fi can't reach the pack server by the address in the code. In that case the launcher looks for it on the same computer and asks the router (UPnP) which computer the pack port is forwarded to. A server found this way is used only if its file list is signed with the key from the code.
 - When the game crashes, the launcher shows the log path: `%APPDATA%\sharepack\profiles\<key>\launcher_log.txt`.
 
 ## Building

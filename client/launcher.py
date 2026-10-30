@@ -7,12 +7,14 @@ import ctypes
 import glob
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import os
 import re
 import shlex
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -505,6 +507,81 @@ def write_servers_dat(path, name, ip):
         f.write(b"\x0a\x00\x00" + servers + b"\x00")
 
 
+def private_ips():
+    """This computer's IPv4 addresses in private ranges: the home network, sometimes also a VPN."""
+    out = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_private and not ip.is_loopback and not ip.is_link_local and str(ip) not in out:
+                out.append(str(ip))
+    except OSError:
+        pass
+    return out
+
+
+def router_forward(port, timeout=2.0):
+    """The home computer the router forwards TCP port to (UPnP), or None.
+    Many home routers can't connect a computer to the router's own internet address, so the pack server owner
+    and players on the same Wi-Fi can't reach it by the address in the code. The router knows the local one."""
+    search = ["urn:schemas-upnp-org:device:InternetGatewayDevice:1", "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
+              "urn:schemas-upnp-org:service:WANIPConnection:1"]
+    socks = []
+    try:
+        # from every adapter: with a VPN on, the default route leads into the VPN
+        for ip in private_ips():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.bind((ip, 0))
+                s.setblocking(False)
+                socks.append(s)
+                for st in search:
+                    msg = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\n"
+                           f"MX: 2\r\nST: {st}\r\n\r\n")
+                    s.sendto(msg.encode(), ("239.255.255.250", 1900))
+            except OSError:
+                pass
+        deadline = time.time() + timeout
+        while socks and time.time() < deadline:
+            for s in socks:
+                try:
+                    data = s.recv(2048).decode("utf-8", "replace")
+                except OSError:
+                    continue
+                m = re.search(r"(?im)^location:\s*(\S+)", data)
+                target = m and _upnp_forward_target(m.group(1), port)
+                if target:
+                    return target
+            time.sleep(0.05)
+    finally:
+        for s in socks:
+            s.close()
+    return None
+
+
+def _upnp_forward_target(location, port):
+    try:
+        desc = requests.get(location, timeout=3).text
+        for svc in ("WANIPConnection", "WANPPPConnection"):
+            m = re.search(rf"<serviceType>(urn:schemas-upnp-org:service:{svc}:\d)</serviceType>.*?"
+                          r"<controlURL>([^<]+)</controlURL>", desc, re.S)
+            if not m:
+                continue
+            body = (f'<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+                    f's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
+                    f'<u:GetSpecificPortMappingEntry xmlns:u="{m.group(1)}"><NewRemoteHost></NewRemoteHost>'
+                    f'<NewExternalPort>{port}</NewExternalPort><NewProtocol>TCP</NewProtocol>'
+                    f'</u:GetSpecificPortMappingEntry></s:Body></s:Envelope>')
+            r = requests.post(urllib.parse.urljoin(location, m.group(2).strip()), data=body.encode(), timeout=3,
+                              headers={"Content-Type": 'text/xml; charset="utf-8"',
+                                       "SOAPAction": f'"{m.group(1)}#GetSpecificPortMappingEntry"'})
+            client = re.search(r"<NewInternalClient>([^<]+)<", r.text) if r.ok else None
+            return client.group(1).strip() if client else None
+    except requests.RequestException:
+        pass
+    return None
+
+
 class Installer:
     def __init__(self, host, port, key, signing_key, data_dir, status, progress, java_path=None):
         self.host = host
@@ -850,6 +927,8 @@ class Api:
         self._started = time.time()
         self._last_progress = 0.0
         self._best_progress = 0.0
+        # access key -> address of the pack server found in the home network
+        self._local = {}
         self._moved_at = time.time()
         self._javas = None
         self._in_main = False
@@ -985,7 +1064,7 @@ class Api:
         if not target:
             return self._fail(problem(t("e_bad_code"), t("d_bad_code")))
         try:
-            m = self._installer(target).fetch_manifest(timeout=8)
+            m = self._fetch_manifest(target)
         except LauncherError as e:
             return self._fail(e.problem)
         except requests.RequestException as e:
@@ -1147,8 +1226,31 @@ class Api:
         return self._user_settings()["profiles_dir"] or DEFAULT_DATA_DIR
 
     def _installer(self, target):
-        return Installer(*target, self._data_dir(), self._status, self._progress,
+        host, port, key, signing_key = target
+        host = self._local.get(key, host)
+        return Installer(host, port, key, signing_key, self._data_dir(), self._status, self._progress,
                          java_path=self._user_settings()["java_path"] or None)
+
+    def _fetch_manifest(self, target):
+        """By the address in the code; if it doesn't answer, looks for the same pack server in the home network.
+        A server found there is used only if its file list is signed with the key from the code."""
+        host, port, key, signing_key = target
+        self._local.pop(key, None)
+        try:
+            return self._installer(target).fetch_manifest(timeout=5)
+        except requests.RequestException:
+            # this computer first, then the one the router forwards the port to
+            for candidate in ("127.0.0.1", router_forward(port)):
+                if not candidate:
+                    continue
+                inst = Installer(candidate, port, key, signing_key, self._data_dir(), self._status, self._progress)
+                try:
+                    m = inst.fetch_manifest(timeout=3)
+                except (LauncherError, requests.RequestException):
+                    continue
+                self._local[key] = candidate
+                return m
+            raise
 
     def _packs(self):
         packs = self._settings.get("packs", {})
