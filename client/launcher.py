@@ -378,7 +378,7 @@ def total_ram_mb():
 def java_info(java_exe):
     """Java version and vendor from the release file, or from java -version."""
     home = os.path.dirname(os.path.dirname(java_exe))
-    version = vendor = ""
+    version = vendor = arch = ""
     try:
         with open(os.path.join(home, "release"), encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -388,6 +388,8 @@ def java_info(java_exe):
                     version = value
                 elif key == "IMPLEMENTOR":
                     vendor = value
+                elif key == "OS_ARCH":
+                    arch = value.lower()
     except OSError:
         pass
     if not version:
@@ -396,6 +398,7 @@ def java_info(java_exe):
                                  creationflags=NO_WINDOW).stderr
             m = re.search(r'version "([^"]+)"', out)
             version = m.group(1) if m else ""
+            arch = "x86" if out and "64-Bit" not in out else arch
         except (OSError, subprocess.SubprocessError):
             return None
     if not version:
@@ -406,7 +409,20 @@ def java_info(java_exe):
         label = t("java_from_launcher", major=major)
     elif not vendor and "java-runtime" in java_exe.lower():
         label = f"Java {major} (Mojang)"
-    return {"path": java_exe, "version": version, "major": int(major) if major.isdigit() else 0, "label": label}
+    return {"path": java_exe, "version": version, "major": int(major) if major.isdigit() else 0, "label": label,
+            # 32-bit Java can't give the game more than about 1.5 GB of memory
+            "x86": arch in ("x86", "i386", "i586", "i686")}
+
+
+@contextlib.contextmanager
+def no_java_download():
+    """install_minecraft_version downloads Java into the profile folder; the launcher picks Java itself."""
+    original = mll.install.install_jvm_runtime
+    mll.install.install_jvm_runtime = lambda *args, **kwargs: None
+    try:
+        yield
+    finally:
+        mll.install.install_jvm_runtime = original
 
 
 def find_javas():
@@ -589,6 +605,9 @@ class Installer:
         self.status = status
         self.progress = progress
         self.java_path = java_path
+        self.java = java_path  # picked in install_game
+        # Java downloaded from Mojang is shared by all packs: <data_dir>/runtime
+        self.data_dir = data_dir
         # folder per key, not per code, so a new owner IP keeps the downloaded files
         self.game_dir = os.path.join(data_dir, key)
         self.pack_url = f"http://{host}:{port}/{key}"
@@ -601,8 +620,6 @@ class Installer:
 
         def set_status(s):
             # the library reports every file; only step changes are shown
-            if s.startswith("Install java runtime"):
-                self.status(t("installing_java"))
             if span is None and s in PROGRESS_VANILLA:
                 state["range"] = PROGRESS_VANILLA[s]
 
@@ -680,17 +697,13 @@ class Installer:
         loader = m.get("loader", "vanilla")
         os.makedirs(self.game_dir, exist_ok=True)
         self.status(t("installing_mc", mc=mc))
-        # vanilla first; it also brings the right Java
-        mll.install.install_minecraft_version(mc, self.game_dir, callback=self.callback())
+        # vanilla first, then Java (the loader installers need it)
+        with no_java_download():
+            mll.install.install_minecraft_version(mc, self.game_dir, callback=self.callback())
+        self.java = self._pick_java(mc)
         if loader == "vanilla":
             self.progress(PROGRESS_LOADER[1])
             return mc
-        java = self.java_path
-        if not java:
-            version_json = os.path.join(self.game_dir, "versions", mc, f"{mc}.json")
-            with open(version_json, encoding="utf-8") as f:
-                component = json.load(f).get("javaVersion", {}).get("component", "java-runtime-gamma")
-            java = mll.runtime.get_executable_path(component, self.game_dir) or "java"
 
         ml = mll.mod_loader.get_mod_loader(loader)
         loader_version = m.get("loader_version") or ml.get_latest_loader_version(mc)
@@ -703,11 +716,50 @@ class Installer:
         if not any(os.path.isfile(p) for p in markers):
             self.status(t("installing_loader", loader=loader, version=loader_version))
             ml.install(mc, self.game_dir, loader_version=loader_version, callback=self.callback(PROGRESS_LOADER),
-                       java=java)
+                       java=self.java)
             with open(done_marker, "w") as f:
                 f.write(loader_version)
         self.progress(PROGRESS_LOADER[1])
         return version_id
+
+    def _pick_java(self, mc):
+        """Java for this Minecraft version: the one chosen in settings, the shared copy from Mojang,
+        a Java of the same version already on this computer, or else a download from Mojang into the shared copy."""
+        if self.java_path:
+            return self.java_path
+        with open(os.path.join(self.game_dir, "versions", mc, f"{mc}.json"), encoding="utf-8") as f:
+            need = json.load(f).get("javaVersion", {})
+        component, major = need.get("component", "jre-legacy"), need.get("majorVersion", 8)
+        self._move_old_runtime()
+        # .version is written after the last file, so the copy is complete
+        shared = mll.runtime.get_executable_path(component, self.data_dir)
+        if shared and glob.glob(os.path.join(self.data_dir, "runtime", component, "*", ".version")):
+            return shared
+        # the exact version: old Forge doesn't start on a newer Java
+        for j in find_javas():
+            if j["major"] == major and not j["x86"]:
+                self.status(t("using_java", label=j["label"]))
+                return j["path"]
+        self.status(t("installing_java"))
+        callback = self.callback()
+        callback["setStatus"]("Install java runtime")
+        mll.runtime.install_jvm_runtime(component, self.data_dir, callback=callback)
+        return mll.runtime.get_executable_path(component, self.data_dir) or "java"
+
+    def _move_old_runtime(self):
+        """Before v2026.b8 every profile had its own Java. It becomes the shared one or is deleted."""
+        old = os.path.join(self.game_dir, "runtime")
+        if not os.path.isdir(old):
+            return
+        shared = os.path.join(self.data_dir, "runtime")
+        os.makedirs(shared, exist_ok=True)
+        for name in os.listdir(old):
+            if not os.path.exists(os.path.join(shared, name)):
+                try:
+                    os.replace(os.path.join(old, name), os.path.join(shared, name))
+                except OSError:
+                    pass
+        shutil.rmtree(old, ignore_errors=True)
 
     def pack_path(self, rel, managed=False):
         """Absolute path for a path from the manifest, or None if it leaves the profile folder.
@@ -792,8 +844,8 @@ class Installer:
             "gameDirectory": self.game_dir,
             "jvmArguments": [f"-Xmx{memory}M", f"-Xms{min(memory, 1024)}M"] + shlex.split(java_args or "", posix=False),
         }
-        if self.java_path:
-            options["executablePath"] = self.java_path
+        if self.java:
+            options["executablePath"] = self.java
         return mll.command.get_minecraft_command(version_id, self.game_dir, options)
 
 

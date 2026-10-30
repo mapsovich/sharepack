@@ -96,6 +96,7 @@ Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be
 - Saved nicknames open with the arrow in the nickname field.
 - Packs that were played before are listed under "choose a pack", so the code is needed only once. Each pack has buttons to open its folder, redownload it (worlds, screenshots and `options.txt` are kept) and delete it (two clicks).
 - The settings (gear icon) contain the profiles folder, RAM (`4096` or `4G`), a custom `java.exe` and Java arguments.
+- Java: the one chosen in the settings; otherwise a Java of the version the game needs that is already on the computer (Minecraft Launcher, Prism, Adoptium and others); otherwise it is downloaded from Mojang once into `profilesuntime` and shared by all packs.
 - The language follows Windows and can be switched with the `RU`/`EN` button in the settings.
 - The light or dark theme also follows Windows; the button next to `RU`/`EN` switches between same as Windows, light and dark.
 - Requires Microsoft Edge WebView2, which is included in Windows 10 and 11.
