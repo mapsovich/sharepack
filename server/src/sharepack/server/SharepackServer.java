@@ -160,6 +160,8 @@ public final class SharepackServer {
                     "Hosting panel detected: add one more port (allocation) in the panel,"));
             log(tr("укажите его в http-port в " + cfgFile + " и перезапустите сервер.",
                     "set it as http-port in " + cfgFile + " and restart the server."));
+        } else if (useUpnp(cfg)) {
+            openRouterPort(httpPort, address);
         } else {
             log(tr("Порт раздачи: " + httpPort + " (TCP). Он должен быть открыт на роутере.",
                     "Pack port: " + httpPort + " (TCP). It must be forwarded on your router."));
@@ -180,7 +182,8 @@ public final class SharepackServer {
         String lang = p.getProperty("language", "auto").trim();
         ru = pickRussian(lang);
         // Rewrite the file when the key is missing, has the old length, or the file predates the language setting.
-        if (p.getProperty("key", "").trim().length() != Code.SECRET_BYTES * 2 || p.getProperty("language") == null) {
+        if (p.getProperty("key", "").trim().length() != Code.SECRET_BYTES * 2 || p.getProperty("language") == null
+                || p.getProperty("upnp") == null) {
             String keyHex = p.getProperty("key", "").trim();
             if (keyHex.length() != Code.SECRET_BYTES * 2) {
                 if (!keyHex.isEmpty()) {
@@ -200,6 +203,11 @@ public final class SharepackServer {
                     + tr("# Внешний IP или домен. Если пусто, определяется автоматически\n",
                             "# Public IP or domain. Detected automatically if empty\n")
                     + "public-address=" + p.getProperty("public-address", "") + "\n"
+                    + tr("# Открывать порт раздачи на домашнем роутере автоматически (UPnP): auto или off.\n"
+                                    + "# На хостинге и на сервере с публичным IP не используется\n",
+                            "# Forward the pack port on a home router automatically (UPnP): auto or off.\n"
+                                    + "# Not used on hostings and on servers with a public IP\n")
+                    + "upnp=" + p.getProperty("upnp", "auto") + "\n"
                     + tr("# Секретный ключ, входит в код. Никому не передавайте его отдельно от кода. Если удалить\n"
                                     + "# строку, будет создан новый ключ и старый код перестанет работать\n",
                             "# Secret key, part of the code. Don't share it apart from the code. Delete this line\n"
@@ -225,6 +233,72 @@ public final class SharepackServer {
         if (isPublicIPv4(props)) return new String[]{props.trim(), "server-ip, server.properties"};
         String ip = detectPublicIp();
         return ip == null ? null : new String[]{ip, "api.ipify.org"};
+    }
+
+    /**
+     * UPnP only makes sense behind a home router: the computer has a private address and no hosting panel.
+     * On a VPS or a dedicated server the address is public and there is no router to ask.
+     */
+    private static boolean useUpnp(Properties cfg) {
+        return !"off".equalsIgnoreCase(cfg.getProperty("upnp", "auto").trim()) && Upnp.behindRouter();
+    }
+
+    /** Finds the router, checks its internet address and forwards the pack port. Runs in the background. */
+    private static void openRouterPort(int port, String[] address) {
+        Thread t = new Thread(() -> {
+            Upnp router = Upnp.find(3000);
+            if (router == null) {
+                log(tr("Порт раздачи: " + port + " (TCP). Открыть его на роутере автоматически не удалось:",
+                        "Pack port: " + port + " (TCP). It could not be forwarded on the router automatically:"));
+                log(tr("UPnP на роутере выключен или не поддерживается. Откройте порт вручную.",
+                        "UPnP is off or not supported on the router. Forward the port by hand."));
+                return;
+            }
+            String external = router.externalIp();
+            if (external != null && !external.isEmpty() && !isPublicIPv4(external)) {
+                log(tr("Провайдер выдал роутеру серый адрес " + external + ": один внешний IP на многих абонентов.",
+                        "Your ISP gave the router a shared (CGNAT) address " + external + "."));
+                log(tr("Игроки из интернета не смогут подключиться, даже если открыть порт. Закажите у провайдера",
+                        "Players from the internet can't connect even with the port forwarded. Ask your ISP for"));
+                log(tr("белый IP или используйте общую виртуальную сеть (Radmin VPN, ZeroTier) и укажите её адрес в public-address.",
+                        "a public IP, or use a virtual network (Radmin VPN, ZeroTier) and set its address as public-address."));
+                return;
+            }
+            if (external != null && "api.ipify.org".equals(address[1]) && !external.equals(address[0])) {
+                log(tr("Адрес роутера в интернете (" + external + ") не совпадает с внешним IP (" + address[0] + "):",
+                        "The router's internet address (" + external + ") differs from the public IP (" + address[0] + "):"));
+                log(tr("похоже, включён VPN или роутер подключён через ещё один роутер. Выключите VPN",
+                        "a VPN seems to be on, or the router is behind another router. Turn the VPN off"));
+                log(tr("или откройте порт и на втором роутере, иначе игроки не подключатся.",
+                        "or forward the port on the other router too, otherwise players can't connect."));
+            }
+            int lease;
+            try {
+                lease = router.forward(port, "sharepack");
+            } catch (IOException e) {
+                log(tr("Не удалось открыть порт " + port + " на роутере через UPnP (" + e.getMessage() + "). Откройте его вручную.",
+                        "Could not forward port " + port + " through UPnP (" + e.getMessage() + "). Forward it by hand."));
+                return;
+            }
+            log(tr("Порт раздачи " + port + " (TCP) открыт на роутере автоматически (UPnP).",
+                    "Pack port " + port + " (TCP) was forwarded on the router automatically (UPnP)."));
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> router.remove(port)));
+            // the forward expires unless renewed
+            while (lease > 0) {
+                try {
+                    Thread.sleep(lease * 500L);
+                    lease = router.forward(port, "sharepack");
+                } catch (InterruptedException e) {
+                    return;
+                } catch (IOException e) {
+                    log(tr("Не удалось продлить открытие порта " + port + " на роутере: " + e.getMessage(),
+                            "Could not renew the forward of port " + port + " on the router: " + e.getMessage()));
+                    return;
+                }
+            }
+        }, "sharepack-upnp");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Pterodactyl/Pelican: a second port can only be added in the panel. */

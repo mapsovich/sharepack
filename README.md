@@ -33,7 +33,7 @@ Downloads: [latest release](https://github.com/mapsovich/sharepack/releases/late
    ```
 3. Put the client mods into `files/mods/` and, if needed, configs into `files/config/`.
 4. Open the pack port (TCP 25566 by default):
-   - home server: forward the port on your router;
+   - home server: on most routers the server part does this itself through UPnP and says so in the console. If it can't, forward the port on your router by hand;
    - game server hosting: add a second port in the hosting control panel and set it as `http-port` in `sharepack/config.properties`.
 5. Give players the code from the server console or from `sharepack/CODE.txt`.
 
@@ -73,6 +73,7 @@ Files can be changed while the server is running: the launcher compares them on 
 - `language`: console language, `auto`, `ru` or `en`.
 - `http-port`: pack port, 25566 by default.
 - `public-address`: public IP or domain. If empty, the address is detected in this order: the hosting panel IP (`SERVER_IP` on Pterodactyl/Pelican), `server-ip` from `server.properties`, then api.ipify.org. The detected address is printed in the console. With a dynamic home IP, use a domain (for example from DuckDNS) so the code doesn't change.
+- `upnp`: `auto` forwards the pack port on a home router through UPnP and removes the forward when the server stops; `off` disables it. It isn't used on hostings and on machines with a public IP. On start it also checks the router's internet address and warns about a shared ISP address (CGNAT) or a VPN, when players can't connect even with the port forwarded.
 - `key`: secret key, part of the code. Delete the line to generate a new key; the old code stops working. Codes made before v2026.b2 are replaced automatically on the first start.
 
 ### Without a game server (single-player world)
@@ -82,7 +83,7 @@ You can play in your own single-player world opened to LAN, with no game server 
 1. Put `sharepack-server.jar` into any folder and run `java -jar sharepack-server.jar` there.
 2. Without a game server the version can't be detected, so set `minecraft`, `loader` and, if needed, `loader_version` in `sharepack/pack.json` instead of `auto`.
 3. Put [LAN World Plug-n-Play](https://modrinth.com/mod/mcwifipnp) into `files/mods/`, and on Fabric or Quilt also [Fabric API](https://modrinth.com/mod/fabric-api). Without it, a world opened to LAN asks every player for a Microsoft account and nickname-only players can't join.
-4. Open the pack port (TCP 25566) on your router, as for a home server.
+4. The pack port (TCP 25566) is forwarded on your router automatically through UPnP; if the console says it didn't work, forward it by hand.
 5. Start the game from the launcher, open your world, press Esc → "Open to LAN", turn **Online Mode** off and open the world. The mod tries to forward the world port through UPnP and prints the addresses in the chat. If your router doesn't support UPnP, forward that port by hand; set a fixed port in the same screen so it doesn't change.
 6. Friends join with "Multiplayer" → "Direct Connection" and your address with the world port. To get the right server in their list, set `server` in `pack.json` to `"address:port"`.
 
