@@ -90,6 +90,8 @@ Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be
 
 The launcher checks GitHub releases on startup. If a newer version exists, it offers to download it, replaces the exe and restarts. The server plugin checks on startup as well and prints a message in the console.
 
+The launcher and the server part have separate version numbers (`client/VERSION` and `server/VERSION`). A release that changes only one of them offers an update only for that part: players aren't asked to update the launcher because of a server fix, and server owners aren't told about launcher changes.
+
 ## Security
 
 - The code holds the server address, the pack port and a 96-bit secret. Codes of different servers can't match: the address and port are part of the code.

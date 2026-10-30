@@ -22,8 +22,11 @@ import java.util.regex.Pattern;
  *   defaults/          copied to players once, never overwritten
  */
 public final class SharepackServer {
-    static final String VERSION = "v2026.b6";
+    /** Server part version. It changes only with server changes and must match server/VERSION. */
+    static final String VERSION = "v2026.b7";
     static final String RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest";
+    /** Version of the server part at a release tag; releases before v2026.b7 have no such file. */
+    static final String VERSION_FILE = "https://raw.githubusercontent.com/mapsovich/sharepack/%s/server/VERSION";
     private static final String DIR = "sharepack";
     private static final String OLD_DIR = "packserver";
     /** Connections served at once. The rest are closed, so a flood can't eat the game server's memory. */
@@ -257,9 +260,12 @@ public final class SharepackServer {
                 String json = new String(httpGet(RELEASES_API), StandardCharsets.UTF_8);
                 String tag = jsonField(json, "tag_name");
                 String url = jsonField(json, "html_url");
-                if (tag != null && isNewer(tag, VERSION)) {
-                    log(tr("Доступна новая версия sharepack: " + tag + " (установлена " + VERSION + "). " + url,
-                            "A new sharepack version is available: " + tag + " (installed " + VERSION + "). " + url));
+                if (tag == null || !isNewer(tag, VERSION)) return;
+                // the release may change only the launcher
+                String version = new String(httpGet(String.format(VERSION_FILE, tag)), StandardCharsets.UTF_8).trim();
+                if (isNewer(version, VERSION)) {
+                    log(tr("Доступна новая версия sharepack: " + version + " (установлена " + VERSION + "). " + url,
+                            "A new sharepack version is available: " + version + " (installed " + VERSION + "). " + url));
                 }
             } catch (IOException ignored) {
             }

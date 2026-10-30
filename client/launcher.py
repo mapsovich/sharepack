@@ -29,13 +29,16 @@ import i18n
 from i18n import t
 
 TITLE = "sharepack"
-VERSION = "v2026.b6"
+# Launcher version. It changes only with launcher changes and must match client/VERSION.
+VERSION = "v2026.b7"
 CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32, same as the server
 SECRET_BYTES = 12
 LINKS = {"github": "https://github.com/mapsovich", "m": "https://mstudio.one/game"}
 RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest"
 RELEASES_PAGE = "https://github.com/mapsovich/sharepack/releases/latest"
 RELEASES_DOWNLOAD = "https://github.com/mapsovich/sharepack/releases/download/"
+# version of each part at a release tag; releases before v2026.b7 have no such file
+VERSION_FILE = "https://raw.githubusercontent.com/mapsovich/sharepack/{tag}/client/VERSION"
 
 # former launcher names, their data is moved by migrate_old_data
 OLD_NAMES = ("joinpack", "minejoin")  # newest first
@@ -143,7 +146,8 @@ def version_key(tag):
 
 
 def check_update():
-    """Latest GitHub release if it is newer: {"version", "url", "asset"} or None.
+    """Latest GitHub release if it has a newer launcher: {"version", "url", "asset"} or None.
+    A release may change only the server part, so the launcher version is read from client/VERSION at the tag.
     SHAREPACK_FAKE_UPDATE=v2026.b2 shows the update screen for testing."""
     fake = os.environ.get("SHAREPACK_FAKE_UPDATE")
     if fake:
@@ -157,11 +161,19 @@ def check_update():
     tag = str(release.get("tag_name") or "")
     if not tag or version_key(tag) <= version_key(VERSION):
         return None
+    try:
+        r = requests.get(VERSION_FILE.format(tag=tag), timeout=(3, 5))
+        r.raise_for_status()
+        version = r.text.strip()
+    except requests.RequestException:
+        return None
+    if version_key(version) <= version_key(VERSION):
+        return None
     asset = next((a.get("browser_download_url") for a in release.get("assets", []) if a.get("name") == "sharepack.exe"),
                  None)
     if not str(asset).startswith(RELEASES_DOWNLOAD):
         asset = None
-    return {"version": tag, "url": release.get("html_url") or RELEASES_PAGE, "asset": asset}
+    return {"version": version, "url": release.get("html_url") or RELEASES_PAGE, "asset": asset}
 
 
 def replace_exe(url):
