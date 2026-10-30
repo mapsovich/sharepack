@@ -125,8 +125,17 @@ public final class SharepackServer {
         if (game.minecraft != null) {
             log(tr("Сервер: ", "Server: ") + game);
         } else {
-            log(tr("Версию Minecraft определить не удалось. Укажите minecraft и loader в " + packJson + ".",
-                    "Could not detect the Minecraft version. Set minecraft and loader in " + packJson + "."));
+            // without a game server (a single-player world) the version comes from pack.json
+            String pack = new String(readAll(new FileInputStream(packJson)), StandardCharsets.UTF_8);
+            String mc = jsonField(pack, "minecraft"), loader = jsonField(pack, "loader");
+            if (mc != null && loader != null && !mc.trim().isEmpty() && !loader.trim().isEmpty()
+                    && !mc.trim().equalsIgnoreCase("auto") && !loader.trim().equalsIgnoreCase("auto")) {
+                log(tr("Игровой сервер не найден, используются значения из pack.json: ",
+                        "No game server found, using the values from pack.json: ") + mc + ", " + loader + ".");
+            } else {
+                log(tr("Версию Minecraft определить не удалось. Укажите minecraft и loader в " + packJson + ".",
+                        "Could not detect the Minecraft version. Set minecraft and loader in " + packJson + "."));
+            }
         }
 
         byte[] secret = hexToBytes(cfg.getProperty("key"));
