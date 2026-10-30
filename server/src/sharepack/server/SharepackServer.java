@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  */
 public final class SharepackServer {
     /** Server part version. It changes only with server changes and must match server/VERSION. */
-    static final String VERSION = "v2026.b7";
+    static final String VERSION = "v2026.b8";
     static final String RELEASES_API = "https://api.github.com/repos/mapsovich/sharepack/releases/latest";
     /** Version of the server part at a release tag; releases before v2026.b7 have no such file. */
     static final String VERSION_FILE = "https://raw.githubusercontent.com/mapsovich/sharepack/%s/server/VERSION";

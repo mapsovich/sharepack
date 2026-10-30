@@ -37,7 +37,7 @@ from i18n import t
 
 TITLE = "sharepack"
 # Launcher version. It changes only with launcher changes and must match client/VERSION.
-VERSION = "v2026.b7"
+VERSION = "v2026.b8"
 CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32, same as the server
 SECRET_BYTES = 12
 LINKS = {"github": "https://github.com/mapsovich", "m": "https://mstudio.one/game"}
