@@ -83,6 +83,7 @@ Run `sharepack.exe`, enter a nickname and the code, press "play". The exe can be
 - Packs that were played before are listed under "choose a pack", so the code is needed only once. Each pack has buttons to open its folder, redownload it (worlds, screenshots and `options.txt` are kept) and delete it (two clicks).
 - The settings (gear icon) contain the profiles folder, RAM (`4096` or `4G`), a custom `java.exe` and Java arguments.
 - The language follows Windows and can be switched with the `RU`/`EN` button in the settings.
+- The light or dark theme also follows Windows; the button next to `RU`/`EN` switches between same as Windows, light and dark.
 - Requires Microsoft Edge WebView2, which is included in Windows 10 and 11.
 
 ## Updates

@@ -20,16 +20,71 @@
   --bad: #7a2e2a;
   --bad-border: #57201d;
   --close-hover: #c42b1c;
+  --fg: #fff;
+  --fg-rgb: 255, 255, 255;
+  --list-hover: #222;
+  --list-shadow: rgba(0, 0, 0, 0.6);
+  --mini-hover: #363636;
+  --focus: #2a2a2a;
+  --scroll: #333;
+  --thumb: #505050;
+  --thumb-hover: #7a7a7a;
+  --ready-text: #d6d6d6;
+  --ready-active: #3a3a3a;
+  --ok-text: #e6f7df;
+  --bad-text: #ffd9d6;
+  --warn: #e6c46a;
+  --val-ok: #8fd46f;
+  --nick-bg: rgba(10, 10, 10, 0.45);
+  --nick-bg-hover: rgba(10, 10, 10, 0.6);
+  --icon-filter: none;
   --font-ui: "Segoe UI", sans-serif;
   --font-pixel: "Monocraft", monospace;
   --font-mono: "Ubuntu Mono", monospace;
   --fade: 220ms;
 }
 
+/* Light theme: app.js sets data-theme on <html> (from Windows or the settings button) */
+:root[data-theme="light"] {
+  --bg: #ececec;
+  --input: #dedede;
+  --input-hover: #d4d4d4;
+  --list: #f6f6f6;
+  --button: #c4c4c4;
+  --button-hover: #bababa;
+  --button-border: #a8a8a8;
+  --button-text: #5c5c5c;
+  --console: #e2e2e2;
+  --error: #c0392b;
+  --ok: #4c9a37;
+  --ok-hover: #55a83f;
+  --ok-border: #3b7a2a;
+  --bad: #c4544c;
+  --bad-border: #a3423b;
+  --fg: #151515;
+  --fg-rgb: 21, 21, 21;
+  --list-hover: #e4e4e4;
+  --list-shadow: rgba(0, 0, 0, 0.18);
+  --mini-hover: #d2d2d2;
+  --focus: #bdbdbd;
+  --scroll: #c2c2c2;
+  --thumb: #b5b5b5;
+  --thumb-hover: #8c8c8c;
+  --ready-text: #2a2a2a;
+  --ready-active: #b0b0b0;
+  --ok-text: #f3fff0;
+  --bad-text: #fff3f2;
+  --warn: #9a6f00;
+  --val-ok: #2f7d1c;
+  --nick-bg: rgba(240, 240, 240, 0.55);
+  --nick-bg-hover: rgba(240, 240, 240, 0.75);
+  --icon-filter: invert(1);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
   width: 426px; height: 360px; overflow: hidden;
-  background: var(--bg); color: #fff;
+  background: var(--bg); color: var(--fg);
   user-select: none; -webkit-user-select: none;
   font-variant-ligatures: none;  /* Monocraft has coding ligatures like -> */
 }
@@ -74,10 +129,10 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 .window-buttons { position: absolute; right: 11px; top: 9px; height: 20px; display: flex; z-index: 5; }
 .wb {
   width: 31px; height: 20px; display: grid; place-items: center;
-  color: rgba(255, 255, 255, 0.45); cursor: pointer; transition: background 120ms, color 120ms;
+  color: rgba(var(--fg-rgb), 0.45); cursor: pointer; transition: background 120ms, color 120ms;
 }
 .wb svg { width: 10px; height: 10px; display: block; overflow: visible; }
-.wb:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85); }
+.wb:hover { background: rgba(var(--fg-rgb), 0.08); color: rgba(var(--fg-rgb), 0.85); }
 .wb--close:hover { background: var(--close-hover); color: #fff; }
 
 /* Header */
@@ -104,7 +159,7 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 .links { position: absolute; right: 30px; top: 30px; display: flex; align-items: center; gap: 11px; z-index: 5; }
 .link--lang {
   font-family: var(--font-pixel); font-size: 11px; line-height: 21px; height: 21px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(var(--fg-rgb), 0.5);
 }
 .link { display: block; cursor: pointer; transition: filter 120ms; }
 .link img { display: block; }
@@ -114,21 +169,21 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 /* Small icon buttons */
 .icon-button {
   width: 18px; height: 18px; display: grid; place-items: center; cursor: pointer;
-  color: rgba(255, 255, 255, 0.45); transition: background 120ms, color 120ms;
+  color: rgba(var(--fg-rgb), 0.45); transition: background 120ms, color 120ms;
 }
 .icon-button svg { width: 12px; height: 12px; display: block; }
-.icon-button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.icon-button:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--fg); }
 .label-row { display: flex; align-items: center; justify-content: space-between; }
 
 /* Fields */
 .label { display: block; font-family: var(--font-ui); font-size: 15px; line-height: normal; opacity: 0.85; white-space: nowrap; }
 .input {
   display: block; width: 100%; height: 28px; padding: 0 10px 0 11px;
-  background: var(--input); font-family: var(--font-ui); font-size: 10px; color: rgba(255, 255, 255, 0.85);
+  background: var(--input); font-family: var(--font-ui); font-size: 10px; color: rgba(var(--fg-rgb), 0.85);
   text-align: left; user-select: text; -webkit-user-select: text;
 }
-.input::placeholder { color: #fff; opacity: 0.1; }
-.input:focus, .dropdown.is-open .input { box-shadow: inset 0 0 0 1px #2a2a2a; }
+.input::placeholder { color: var(--fg); opacity: 0.1; }
+.input:focus, .dropdown.is-open .input { box-shadow: inset 0 0 0 1px var(--focus); }
 
 /* field bottom lines up with the tagline bottom (96px) */
 .nickname { position: absolute; left: 236px; top: 48px; width: 160px; display: flex; flex-direction: column; gap: 3px; }
@@ -147,33 +202,33 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 .dropdown .input { padding-left: 10px; padding-right: 30px; cursor: pointer; user-select: none; -webkit-user-select: none; }
 .dropdown .input:hover { background: var(--input-hover); }
 .dropdown-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dropdown.is-empty .dropdown-label { color: rgba(255, 255, 255, 0.1); }
+.dropdown.is-empty .dropdown-label { color: rgba(var(--fg-rgb), 0.1); }
 .chevron { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; transition: transform 150ms ease; }
 .dropdown.is-open .chevron { transform: translateY(-50%) rotate(180deg); }
 .dropdown-list {
   position: absolute; left: 0; right: 0; top: 30px; z-index: 10;
-  max-height: 130px; overflow-y: auto; background: var(--list); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  max-height: 130px; overflow-y: auto; background: var(--list); box-shadow: 0 6px 18px var(--list-shadow);
   opacity: 0; transform: translateY(-3px); pointer-events: none; transition: opacity 120ms ease, transform 120ms ease;
-  scrollbar-width: thin; scrollbar-color: #333 transparent;
+  scrollbar-width: thin; scrollbar-color: var(--scroll) transparent;
 }
 .dropdown.is-open .dropdown-list { opacity: 1; transform: none; pointer-events: auto; }
 .dropdown-item {
   display: block; width: 100%; padding: 6px 10px; text-align: left; cursor: pointer;
-  font-family: var(--font-ui); font-size: 10px; line-height: 1.25; color: rgba(255, 255, 255, 0.75);
+  font-family: var(--font-ui); font-size: 10px; line-height: 1.25; color: rgba(var(--fg-rgb), 0.75);
 }
-.dropdown-item:hover { background: #222; color: #fff; }
-.dropdown-item.is-selected { color: #fff; }
-.dropdown-item small { display: block; font-size: 9px; color: rgba(255, 255, 255, 0.3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dropdown-item--action { color: rgba(255, 255, 255, 0.5); border-top: 1px solid #222; }
+.dropdown-item:hover { background: var(--list-hover); color: var(--fg); }
+.dropdown-item.is-selected { color: var(--fg); }
+.dropdown-item small { display: block; font-size: 9px; color: rgba(var(--fg-rgb), 0.3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-item--action { color: rgba(var(--fg-rgb), 0.5); border-top: 1px solid var(--list-hover); }
 /* Nickname field: text input + arrow with saved nicknames */
 .combo .input { padding-right: 28px; cursor: text; user-select: text; -webkit-user-select: text; }
 /* translucent, since it sits on the background image */
 .nickname .input {
-  background: rgba(10, 10, 10, 0.45);
+  background: var(--nick-bg);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   transition: background 120ms;
 }
-.nickname .input:hover, .nickname .input:focus, .nickname .dropdown.is-open .input { background: rgba(10, 10, 10, 0.6); }
+.nickname .input:hover, .nickname .input:focus, .nickname .dropdown.is-open .input { background: var(--nick-bg-hover); }
 .combo-toggle { position: absolute; right: 0; top: 0; width: 28px; height: 28px; cursor: pointer; }
 .combo-toggle .chevron { right: 9px; }
 .combo.is-empty .combo-toggle { display: none; }
@@ -181,20 +236,20 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 
 /* Row with buttons on the right (downloaded packs: redownload, delete) */
 .dropdown-row { display: flex; align-items: center; gap: 2px; padding-right: 4px; }
-.dropdown-row:hover { background: #222; }
+.dropdown-row:hover { background: var(--list-hover); }
 .dropdown-row .dropdown-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dropdown-row .dropdown-item:hover { background: none; }
 .dropdown-mini {
   flex: none; width: 20px; height: 20px; display: grid; place-items: center; cursor: pointer;
-  color: rgba(255, 255, 255, 0.45); transition: background 120ms, color 120ms;
+  color: rgba(var(--fg-rgb), 0.45); transition: background 120ms, color 120ms;
 }
 .dropdown-mini svg { width: 12px; height: 12px; display: block; }
-.dropdown-mini:hover { background: #363636; color: #fff; }
-.dropdown-mini--danger:hover, .dropdown-mini.is-armed { background: var(--bad); color: #ffd9d6; }
+.dropdown-mini:hover { background: var(--mini-hover); color: var(--fg); }
+.dropdown-mini--danger:hover, .dropdown-mini.is-armed { background: var(--bad); color: var(--bad-text); }
 /* the pack list is wider than the field to fit the buttons */
 #dd-pack .dropdown-list { left: auto; width: 220px; }
-.dropdown-item--muted { color: rgba(255, 255, 255, 0.25); cursor: default; }
-.dropdown-item--muted:hover { background: none; color: rgba(255, 255, 255, 0.25); }
+.dropdown-item--muted { color: rgba(var(--fg-rgb), 0.25); cursor: default; }
+.dropdown-item--muted:hover { background: none; color: rgba(var(--fg-rgb), 0.25); }
 
 /* Start button and gear */
 .buttons { position: absolute; left: 30px; top: 222px; display: flex; gap: 3px; }
@@ -203,11 +258,11 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
   width: 319px; font-family: var(--font-pixel); font-size: 10px; color: var(--button-text);
   white-space: nowrap; cursor: default;
 }
-.start--ready { color: #d6d6d6; cursor: pointer; }
+.start--ready { color: var(--ready-text); cursor: pointer; }
 .start--ready:hover { background: var(--button-hover); }
-.start--ready:active { background: #3a3a3a; }
+.start--ready:active { background: var(--ready-active); }
 /* ready to play */
-.start--ok { background: var(--ok); border-color: var(--ok-border); color: #e6f7df; cursor: pointer; }
+.start--ok { background: var(--ok); border-color: var(--ok-border); color: var(--ok-text); cursor: pointer; }
 .start--ok:hover { background: var(--ok-hover); }
 .start--ok:active { background: var(--ok-border); }
 /* Download: the button fills with green from the left (--p from 0 to 1, set by app.js) */
@@ -217,10 +272,10 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
   width: calc(var(--p, 0) * 100%); background: var(--ok);
   opacity: 0; transition: width 300ms ease, opacity 200ms;
 }
-.start--progress { color: #e6f7df; }
+.start--progress { color: var(--ok-text); }
 .start--progress::before { opacity: 1; }
 /* error */
-.start--error { background: var(--bad); border-color: var(--bad-border); color: #ffd9d6; }
+.start--error { background: var(--bad); border-color: var(--bad-border); color: var(--bad-text); }
 .gear { position: relative; width: 44px; cursor: pointer; }
 .gear img { position: absolute; left: 5px; top: 5px; width: 28px; height: 28px; mix-blend-mode: multiply; }
 .gear:hover { background: var(--button-hover); }
@@ -229,15 +284,15 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 .console { position: absolute; left: 18px; top: 281px; width: 389px; height: 79px; background: var(--console); overflow: hidden; }
 .console-text {
   position: absolute; left: 16px; top: 11px; right: 14px; bottom: 6px; overflow-y: auto;
-  font-family: var(--font-mono); font-size: 10px; line-height: 1.334; color: rgba(255, 255, 255, 0.3);
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.334; color: rgba(var(--fg-rgb), 0.3);
   white-space: pre-wrap; word-break: break-word; scrollbar-width: none;
   user-select: text; -webkit-user-select: text;
 }
 .console-text::-webkit-scrollbar { display: none; }
 .console-text .err { color: var(--error); opacity: 0.85; }
-.console-text .warn { color: #e6c46a; opacity: 0.85; }
-.console-text .val { color: rgba(255, 255, 255, 0.75); }
-.console-text .val--ok { color: #8fd46f; }
+.console-text .warn { color: var(--warn); opacity: 0.85; }
+.console-text .val { color: rgba(var(--fg-rgb), 0.75); }
+.console-text .val--ok { color: var(--val-ok); }
 .console-text .val--err { color: var(--error); }
 /* Two info columns: pack on the left, loader and status on the right */
 .console-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
@@ -247,25 +302,41 @@ button, input { font: inherit; color: inherit; border: 0; outline: 0; background
 /* scrollbar in place of the mockup line (2x59); updateScrollbars sizes and moves the thumb */
 .console-scroll { position: absolute; left: 383px; top: 11px; width: 4px; height: 59px; cursor: pointer; }
 .console-thumb {
-  position: absolute; left: 1px; top: 0; width: 2px; height: 59px; background: #505050;
+  position: absolute; left: 1px; top: 0; width: 2px; height: 59px; background: var(--thumb);
   transition: background 120ms;
 }
-.console-scroll:hover .console-thumb, .console-scroll.is-dragging .console-thumb { background: #7a7a7a; }
+.console-scroll:hover .console-thumb, .console-scroll.is-dragging .console-thumb { background: var(--thumb-hover); }
 
 /* collapsed console (set_console in launcher.py shrinks the window) */
 .console { transition: height var(--fade) ease; }
 .console-text { right: 30px; }
 .console-toggle {
   position: absolute; right: 12px; top: 8px; width: 14px; height: 14px; display: grid; place-items: center;
-  color: rgba(255, 255, 255, 0.3); cursor: pointer;
+  color: rgba(var(--fg-rgb), 0.3); cursor: pointer;
 }
 .console-toggle svg { width: 12px; height: 12px; display: block; }
-.console-toggle:hover { color: #fff; }
+.console-toggle:hover { color: var(--fg); }
 .console-bar {
   display: none; width: 100%; height: 100%; cursor: pointer;
-  font-family: var(--font-mono); font-size: 9px; line-height: 14px; color: rgba(255, 255, 255, 0.3);
+  font-family: var(--font-mono); font-size: 9px; line-height: 14px; color: rgba(var(--fg-rgb), 0.3);
 }
-.console-bar:hover { color: rgba(255, 255, 255, 0.7); }
+.console-bar:hover { color: rgba(var(--fg-rgb), 0.7); }
 body.console-hidden .console { height: 14px; }
 body.console-hidden .console-text, body.console-hidden .console-scroll, body.console-hidden .console-toggle { display: none; }
 body.console-hidden .console-bar { display: block; }
+
+/* Light theme: the same shades in the background color, a washed-out picture, dark icons */
+:root[data-theme="light"] .bg-shade--main {
+  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 514 360' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'><rect x='0' y='0' height='100%' width='100%' fill='url(%23grad)' opacity='1'/><defs><radialGradient id='grad' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='10' gradientTransform='matrix(35.1 -56.25 66.155 41.281 191.5 271)'><stop stop-color='rgba(236,236,236,1)' offset='0.17512'/><stop stop-color='rgba(236,236,236,0)' offset='0.54446'/></radialGradient></defs></svg>");
+}
+:root[data-theme="light"] .bg-shade--launch {
+  background: radial-gradient(250px 190px at 180px 110px,
+    rgba(236, 236, 236, 0.9) 0%, rgba(236, 236, 236, 0.6) 48%, rgba(236, 236, 236, 0.15) 84%, rgba(236, 236, 236, 0) 100%);
+}
+:root[data-theme="light"] .bg-img { filter: grayscale(0.3) brightness(1.9) contrast(0.6); opacity: 0.45; }
+.chevron, .or img, .link img { filter: var(--icon-filter); }
+:root[data-theme="light"] .link:hover { filter: brightness(0.3); }
+
+/* theme button in the settings links */
+.link--theme { width: 14px; height: 21px; display: grid; place-items: center; color: rgba(var(--fg-rgb), 0.5); }
+.link--theme svg { width: 12px; height: 12px; display: block; }

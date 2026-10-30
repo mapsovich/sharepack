@@ -943,10 +943,18 @@ class Api:
             "zoom": self._zoom,
             "version": VERSION,
             "lang": i18n.LANG,
+            "theme": self._settings.get("theme", "auto"),
+            "system_theme": system_theme(),
             "console_hidden": self._console_hidden(),
             "total_ram_mb": total_ram_mb(),
             "defaults": {"profiles_dir": DEFAULT_DATA_DIR},
         }
+
+    def set_theme(self, theme):
+        """auto (follow Windows), light or dark."""
+        self._settings["theme"] = theme if theme in THEMES else "auto"
+        save_settings(self._settings)
+        return self._settings["theme"]
 
     def set_language(self, lang):
         """Switches the language of Python messages; the UI translates itself."""
@@ -1248,6 +1256,20 @@ def has_webview2():
     return False
 
 
+THEMES = ("auto", "light", "dark")
+PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
+def system_theme():
+    """light or dark, as set for apps in the Windows settings."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, PERSONALIZE_KEY) as k:
+            return "light" if winreg.QueryValueEx(k, "AppsUseLightTheme")[0] else "dark"
+    except OSError:
+        return "dark"
+
+
 def main():
     if not has_webview2():
         i18n.set_lang(load_settings().get("lang") or i18n.system_lang())
@@ -1263,10 +1285,12 @@ def main():
     migrate_old_data()
     remove_old_exe()
     api = Api(zoom)
+    theme = api._settings.get("theme", "auto")
+    light = (system_theme() if theme == "auto" else theme) == "light"
     api._window = webview.create_window(
         TITLE, os.path.join(UI_DIR, "index.html"), js_api=api, hidden=True,
         width=int(SPLASH_SIZE[0] * zoom), height=int(SPLASH_SIZE[1] * zoom),
-        resizable=False, frameless=True, easy_drag=False, background_color="#0b0b0b",
+        resizable=False, frameless=True, easy_drag=False, background_color="#ececec" if light else "#0b0b0b",
     )
     webview.start()
 

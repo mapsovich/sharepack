@@ -8,6 +8,9 @@ let LANG = "ru";
 const STRINGS = {
   ru: {
     lang_title: "сменить язык (English)",
+    theme_auto: "тема: как в Windows",
+    theme_light: "тема: светлая",
+    theme_dark: "тема: тёмная",
     minimize: "Свернуть",
     close: "Закрыть",
     splash: "загрузка...",
@@ -84,6 +87,9 @@ const STRINGS = {
   },
   en: {
     lang_title: "change language (русский)",
+    theme_auto: "theme: same as Windows",
+    theme_light: "theme: light",
+    theme_dark: "theme: dark",
     minimize: "Minimize",
     close: "Close",
     splash: "loading...",

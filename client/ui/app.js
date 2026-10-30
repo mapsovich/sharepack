@@ -523,8 +523,32 @@ async function saveSettings() {
 // ---------- Language ----------
 // Switches ru/en in place; unsaved settings are kept.
 
+// Theme: "auto" follows Windows, the button cycles auto -> light -> dark.
+const THEMES = ["auto", "light", "dark"];
+const lightQuery = window.matchMedia("(prefers-color-scheme: light)");
+let THEME = "auto";
+let systemTheme = "dark";
+
+function applyTheme() {
+  document.documentElement.dataset.theme = THEME === "auto" ? systemTheme : THEME;
+  const btn = $("theme");
+  btn.title = tr("theme_" + THEME);
+  btn.querySelector("use").setAttribute("href", "#i-theme-" + THEME);
+}
+
+async function switchTheme() {
+  THEME = await api.set_theme(THEMES[(THEMES.indexOf(THEME) + 1) % THEMES.length]);
+  applyTheme();
+}
+
+lightQuery.addEventListener("change", (e) => {
+  systemTheme = e.matches ? "light" : "dark";
+  applyTheme();
+});
+
 function showLangButton() {
   $("lang").textContent = LANG.toUpperCase();
+  applyTheme();  // the theme button title depends on the language
 }
 
 async function switchLanguage() {
@@ -554,6 +578,8 @@ window.addEventListener("pywebviewready", async () => {
   api = window.pywebview.api;
   state = await api.get_state();
   LANG = LANGS.includes(state.lang) ? state.lang : "ru";
+  THEME = THEMES.includes(state.theme) ? state.theme : "auto";
+  systemTheme = state.system_theme === "light" ? "light" : "dark";
   applyStaticTexts();
   showLangButton();
   // scale to the screen; launcher.py resizes the window
@@ -583,6 +609,7 @@ window.addEventListener("pywebviewready", async () => {
   for (const el of document.querySelectorAll("[data-link]")) el.addEventListener("click", () => api.open_link(el.dataset.link));
   $("open-profiles").addEventListener("click", () => api.open_profiles_dir(ddDir.value));
   $("lang").addEventListener("click", switchLanguage);
+  $("theme").addEventListener("click", switchTheme);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") Dropdown.closeAll();
     if (e.key === "Enter" && $("main").classList.contains("is-active")) play();
